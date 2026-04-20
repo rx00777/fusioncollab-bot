@@ -15,7 +15,7 @@ from discord.ext import commands
 # CONFIG
 # =========================================================
 
-TOKEN = ""
+TOKEN = os.getenv("TOKEN", "")
 DATA_FILE = Path("fusioncollab_v2_data.json")
 
 HELP_COLOR = 0x18191C
