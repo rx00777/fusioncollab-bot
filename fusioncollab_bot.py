@@ -991,6 +991,146 @@ class TicketStatsView(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
+DEFAULT_DATA.setdefault("embed_panels", {})
+
+DEFAULT_EMBED_PANEL = {
+    "title": "FusionCollab",
+    "description": "Select an option below.",
+    "embed_color": HELP_COLOR,
+    "footer": "FusionCollab",
+    "thumbnail": None,
+    "image": None,
+    "buttons": {}
+}
+
+DEFAULT_EMBED_BUTTON = {
+    "label": "About",
+    "emoji": None,
+    "style": "secondary",
+    "type": "popup",
+    "url": None,
+    "popup_title": "FusionCollab",
+    "popup_description": "Edit this embed button content.",
+    "popup_color": HELP_COLOR,
+    "popup_footer": "FusionCollab",
+    "popup_thumbnail": None,
+    "popup_image": None
+}
+
+
+def get_embed_panel(panel_key: str) -> Optional[dict]:
+    return data.setdefault("embed_panels", {}).get(panel_key.lower())
+
+
+def set_embed_panel(panel_key: str, panel: dict):
+    data.setdefault("embed_panels", {})[panel_key.lower()] = panel
+    save_data()
+
+
+def delete_embed_panel(panel_key: str):
+    data.setdefault("embed_panels", {}).pop(panel_key.lower(), None)
+    save_data()
+
+
+def embed_panel_with_defaults(panel: dict) -> dict:
+    merged = deep_copy(DEFAULT_EMBED_PANEL)
+    merged.update(panel)
+    merged.setdefault("buttons", {})
+    return merged
+
+
+def embed_button_with_defaults(button: dict) -> dict:
+    merged = deep_copy(DEFAULT_EMBED_BUTTON)
+    merged.update(button)
+    return merged
+
+
+def build_embed_panel_embed(panel: dict) -> discord.Embed:
+    panel = embed_panel_with_defaults(panel)
+
+    embed = discord.Embed(
+        title=panel["title"],
+        description=panel["description"],
+        color=panel["embed_color"],
+        timestamp=now_utc()
+    )
+    embed.set_footer(text=panel.get("footer", "FusionCollab"))
+
+    if panel.get("thumbnail"):
+        embed.set_thumbnail(url=panel["thumbnail"])
+
+    if panel.get("image"):
+        embed.set_image(url=panel["image"])
+
+    return embed
+
+
+def build_embed_popup_embed(button: dict) -> discord.Embed:
+    button = embed_button_with_defaults(button)
+
+    embed = discord.Embed(
+        title=button["popup_title"],
+        description=button["popup_description"],
+        color=button["popup_color"],
+        timestamp=now_utc()
+    )
+    embed.set_footer(text=button.get("popup_footer", "FusionCollab"))
+
+    if button.get("popup_thumbnail"):
+        embed.set_thumbnail(url=button["popup_thumbnail"])
+
+    if button.get("popup_image"):
+        embed.set_image(url=button["popup_image"])
+
+    return embed
+
+
+class EmbedPanelButtonView(discord.ui.View):
+    def __init__(self, panel_key: str, panel: dict):
+        super().__init__(timeout=None)
+        self.panel_key = panel_key
+
+        panel = embed_panel_with_defaults(panel)
+        for button_key, button_data in panel.get("buttons", {}).items():
+            button_data = embed_button_with_defaults(button_data)
+            button_type = button_data.get("type", "popup").lower()
+
+            if button_type == "link" and button_data.get("url"):
+                button = discord.ui.Button(
+                    label=button_data.get("label", button_key.title()),
+                    emoji=parse_button_emoji(button_data.get("emoji")),
+                    style=style_from_name(button_data.get("style", "secondary")),
+                    url=button_data.get("url")
+                )
+                self.add_item(button)
+                continue
+
+            button = discord.ui.Button(
+                label=button_data.get("label", button_key.title()),
+                emoji=parse_button_emoji(button_data.get("emoji")),
+                style=style_from_name(button_data.get("style", "secondary")),
+                custom_id=f"fusioncollab_embedpanel:{panel_key.lower()}:{button_key.lower()}"
+            )
+            button.callback = self.make_callback(panel_key.lower(), button_key.lower())
+            self.add_item(button)
+
+    def make_callback(self, panel_key: str, button_key: str):
+        async def callback(interaction: discord.Interaction):
+            panel = get_embed_panel(panel_key)
+            if not panel:
+                return await interaction.response.send_message("Embed panel not found.", ephemeral=True)
+
+            panel = embed_panel_with_defaults(panel)
+            button_data = panel.get("buttons", {}).get(button_key)
+            if not button_data:
+                return await interaction.response.send_message("Embed button not found.", ephemeral=True)
+
+            embed = build_embed_popup_embed(button_data)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        return callback
+
+
 
 
 
@@ -1356,6 +1496,215 @@ SETUP_GUIDE_PAGES = [
     }
 ]
 
+EMBED_PANEL_GUIDE_PAGES = [
+    {
+        "key": "overview",
+        "title": "FusionCollab Embed Panels",
+        "step": "Overview",
+        "summary": "Embed panels let you send a styled message with multiple buttons that open popup info embeds or link users elsewhere.",
+        "usage": (
+            ".embedpanelcreate <panel_key>\n"
+            ".embedbuttonadd <panel_key> <button_key>\n"
+            ".embedpanelsend <panel_key> <#channel>"
+        ),
+        "example": (
+            ".embedpanelcreate serverinfo\n"
+            ".embedbuttonadd serverinfo about\n"
+            ".embedpanelsend serverinfo #server-info"
+        ),
+        "testing": "Create the panel first, add at least one button, then send it and click the buttons to test each popup."
+    },
+    {
+        "key": "panel",
+        "title": "FusionCollab Embed Panels",
+        "step": "Step 1/4 • Panel Setup",
+        "summary": "The embed panel itself controls the main message users see in the channel.",
+        "usage": (
+            ".embedpanelcreate <panel_key>\n"
+            ".embedpanelset <panel_key> title <text>\n"
+            ".embedpanelset <panel_key> description <text>\n"
+            ".embedpanelset <panel_key> embed_color <hex>\n"
+            ".embedpanelset <panel_key> footer <text>\n"
+            ".embedpanelset <panel_key> thumbnail <url>\n"
+            ".embedpanelset <panel_key> image <url>"
+        ),
+        "example": (
+            ".embedpanelcreate serverinfo\n"
+            ".embedpanelset serverinfo title Server Information\n"
+            ".embedpanelset serverinfo description Click a button below to explore.\n"
+            ".embedpanelset serverinfo embed_color #18191C"
+        ),
+        "testing": "After sending the panel, confirm the main embed title, description, footer, and media look correct."
+    },
+    {
+        "key": "buttons",
+        "title": "FusionCollab Embed Panels",
+        "step": "Step 2/4 • Button Setup",
+        "summary": "Each embed panel button can be fully styled and can either open a popup embed or act as a link button.",
+        "usage": (
+            ".embedbuttonadd <panel_key> <button_key>\n"
+            ".embedbuttonset <panel_key> <button_key> label <text>\n"
+            ".embedbuttonset <panel_key> <button_key> emoji <emoji>\n"
+            ".embedbuttonset <panel_key> <button_key> style <primary|secondary|success|danger>\n"
+            ".embedbuttonset <panel_key> <button_key> type <popup|link>\n"
+            ".embedbuttonset <panel_key> <button_key> url <url>"
+        ),
+        "example": (
+            ".embedbuttonadd serverinfo about\n"
+            ".embedbuttonset serverinfo about label About Server\n"
+            ".embedbuttonset serverinfo about emoji <:WHITETICK:1495855082426728488>\n"
+            ".embedbuttonset serverinfo about style primary\n"
+            ".embedbuttonset serverinfo about type popup"
+        ),
+        "testing": "Check that the buttons show the correct text, emoji, and style on the main embed panel."
+    },
+    {
+        "key": "popup",
+        "title": "FusionCollab Embed Panels",
+        "step": "Step 3/4 • Popup Content",
+        "summary": "Popup buttons open a separate dismissible ephemeral embed, so each button can hold detailed content cleanly.",
+        "usage": (
+            ".embedbuttonset <panel_key> <button_key> popup_title <text>\n"
+            ".embedbuttonset <panel_key> <button_key> popup_description <text>\n"
+            ".embedbuttonset <panel_key> <button_key> popup_color <hex>\n"
+            ".embedbuttonset <panel_key> <button_key> popup_footer <text>\n"
+            ".embedbuttonset <panel_key> <button_key> popup_thumbnail <url>\n"
+            ".embedbuttonset <panel_key> <button_key> popup_image <url>"
+        ),
+        "example": (
+            ".embedbuttonset serverinfo about popup_title About FusionCollab\n"
+            ".embedbuttonset serverinfo about popup_description Welcome to our server.\\nPlease read the info carefully.\n"
+            ".embedbuttonset serverinfo about popup_color #18191C\n"
+            ".embedbuttonset serverinfo about popup_footer FusionCollab"
+        ),
+        "testing": "Click the popup button and confirm the popup embed opens correctly and can be dismissed."
+    },
+    {
+        "key": "send",
+        "title": "FusionCollab Embed Panels",
+        "step": "Step 4/4 • Send and Test",
+        "summary": "Once your panel and buttons are configured, send it to the target channel and test every button.",
+        "usage": (
+            ".embedpanelsend <panel_key> <#channel>\n"
+            ".embedbuttondelete <panel_key> <button_key>\n"
+            ".embedpaneldelete <panel_key>"
+        ),
+        "example": (
+            ".embedpanelsend serverinfo #server-info"
+        ),
+        "testing": "Click every button, verify popup content, verify link buttons, and confirm the message looks clean in the channel."
+    }
+]
+
+
+def embed_panel_topic_alias(topic: str) -> str:
+    topic = str(topic or "overview").lower().strip()
+    alias_map = {
+        "embedpanel": "overview",
+        "embed": "overview",
+        "overview": "overview",
+        "panel": "panel",
+        "buttons": "buttons",
+        "button": "buttons",
+        "popup": "popup",
+        "send": "send",
+        "test": "send",
+        "testing": "send",
+    }
+    return alias_map.get(topic, "overview")
+
+
+def get_embed_panel_guide_index(topic: str) -> int:
+    wanted = embed_panel_topic_alias(topic)
+    for i, page in enumerate(EMBED_PANEL_GUIDE_PAGES):
+        if page["key"] == wanted:
+            return i
+    return 0
+
+
+def build_embed_panel_guide_embed(index: int, prefix: str) -> discord.Embed:
+    index = max(0, min(index, len(EMBED_PANEL_GUIDE_PAGES) - 1))
+    page = EMBED_PANEL_GUIDE_PAGES[index]
+
+    embed = discord.Embed(
+        title=page["title"],
+        description=f"**{page['step']}**\n{page['summary']}",
+        color=HELP_COLOR,
+        timestamp=now_utc()
+    )
+
+    embed.add_field(
+        name="Usage",
+        value=make_code_block(replace_prefix_lines(page["usage"], prefix)),
+        inline=False
+    )
+    embed.add_field(
+        name="Example",
+        value=make_code_block(replace_prefix_lines(page["example"], prefix)),
+        inline=False
+    )
+    embed.add_field(
+        name="Test This",
+        value=page["testing"],
+        inline=False
+    )
+
+    embed.set_author(name="FusionCollab Admin Guide")
+    embed.set_footer(text=f"Page {index + 1}/{len(EMBED_PANEL_GUIDE_PAGES)} • Embed Panel Guide")
+    return embed
+
+
+class EmbedPanelGuideView(discord.ui.View):
+    def __init__(self, author_id: int, prefix: str, start_index: int = 0):
+        super().__init__(timeout=300)
+        self.author_id = author_id
+        self.prefix = prefix
+        self.index = max(0, min(start_index, len(EMBED_PANEL_GUIDE_PAGES) - 1))
+        self.sync_buttons()
+
+    def sync_buttons(self):
+        self.back_button.disabled = self.index <= 0
+        self.next_button.disabled = self.index >= len(EMBED_PANEL_GUIDE_PAGES) - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("This embed panel guide is not for you.", ephemeral=True)
+            return False
+        return True
+
+    async def redraw(self, interaction: discord.Interaction):
+        self.sync_buttons()
+        await interaction.response.edit_message(
+            embed=build_embed_panel_guide_embed(self.index, self.prefix),
+            view=self
+        )
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary, row=0)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.index = max(0, self.index - 1)
+        await self.redraw(interaction)
+
+    @discord.ui.button(label="⌂ Home", style=discord.ButtonStyle.secondary, row=0)
+    async def home_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.index = 0
+        await self.redraw(interaction)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.primary, row=0)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.index = min(len(EMBED_PANEL_GUIDE_PAGES) - 1, self.index + 1)
+        await self.redraw(interaction)
+
+    @discord.ui.button(label="✕", style=discord.ButtonStyle.danger, row=0)
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
 
 def setup_topic_alias(topic: str) -> str:
     topic = str(topic or "overview").lower().strip()
@@ -1379,6 +1728,9 @@ def setup_topic_alias(topic: str) -> str:
         "test": "test",
         "testing": "test",
         "send": "test",
+        "embedpanel": "embedpanel",
+        "embed": "embedpanel",
+
     }
     return alias_map.get(topic, "overview")
 
@@ -1563,13 +1915,38 @@ async def help_cmd(ctx: commands.Context, *, topic: Optional[str] = None):
         "test",
         "testing",
         "send",
+
+
     }
 
-    if topic in setup_topics:
-        if not isinstance(ctx.author, discord.Member) or not ctx.author.guild_permissions.administrator:
+    if topic in {"embedpanel", "embed"}:
+        if not isinstance(ctx.author, discord.Member) or (
+            not ctx.author.guild_permissions.administrator
+            and not ctx.author.guild_permissions.manage_guild
+        ):
             embed = discord.Embed(
                 title="FusionCollab Help",
-                description="You need administrator permission to use the setup guide.",
+                description="You need Administrator or Manage Server permission to use the embed panel guide.",
+                color=HELP_COLOR,
+                timestamp=now_utc()
+            )
+            embed.set_footer(text="FusionCollab")
+            await ctx.send(embed=embed)
+            return
+
+        start_index = get_embed_panel_guide_index(topic)
+        view = EmbedPanelGuideView(ctx.author.id, prefix, start_index=start_index)
+        await ctx.send(embed=build_embed_panel_guide_embed(start_index, prefix), view=view)
+        return
+
+    if topic in setup_topics:
+        if not isinstance(ctx.author, discord.Member) or (
+            not ctx.author.guild_permissions.administrator
+            and not ctx.author.guild_permissions.manage_guild
+        ):
+            embed = discord.Embed(
+                title="FusionCollab Help",
+                description="You need Administrator or Manage Server permission to use the setup guide.",
                 color=HELP_COLOR,
                 timestamp=now_utc()
             )
@@ -1581,6 +1958,7 @@ async def help_cmd(ctx: commands.Context, *, topic: Optional[str] = None):
         view = SetupGuideView(ctx.author.id, prefix, start_index=start_index)
         await ctx.send(embed=build_setup_embed(start_index, prefix), view=view)
         return
+
 
     embed = build_help_embed("home" if topic == "home" else topic, prefix)
     view = HelpView(ctx.author.id, prefix)
@@ -2076,7 +2454,14 @@ async def on_ready():
         except Exception as e:
             print(f"Failed to register panel view for {panel_key}: {e}")
 
+    for panel_key, panel in data.get("embed_panels", {}).items():
+        try:
+            bot.add_view(EmbedPanelButtonView(panel_key, panel))
+        except Exception as e:
+            print(f"Failed to register embed panel view for {panel_key}: {e}")
+
     try:
+
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} global app commands.")
     except Exception as e:
@@ -2423,6 +2808,166 @@ async def ticketstats(ctx: commands.Context):
     view = TicketStatsView(ctx.author.id, pages)
     await ctx.send(embed=pages[0], view=view)
 
+@bot.hybrid_command(name="embedpanelcreate", description="Create a new embed panel.")
+@admin_only()
+async def embedpanelcreate(ctx: commands.Context, key: str):
+    key = key.lower()
+    if get_embed_panel(key):
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` already exists."))
+
+    panel = deep_copy(DEFAULT_EMBED_PANEL)
+    panel["buttons"] = {}
+    set_embed_panel(key, panel)
+
+    bot.add_view(EmbedPanelButtonView(key, panel))
+    await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` created."))
+
+
+@bot.hybrid_command(name="embedpaneldelete", description="Delete an embed panel.")
+@admin_only()
+async def embedpaneldelete(ctx: commands.Context, key: str):
+    key = key.lower()
+    if not get_embed_panel(key):
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` was not found."))
+
+    delete_embed_panel(key)
+    await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` deleted."))
+
+
+@bot.hybrid_command(name="embedbuttonadd", description="Add a button to an embed panel.")
+@admin_only()
+async def embedbuttonadd(ctx: commands.Context, panel_key: str, button_key: str):
+    panel_key = panel_key.lower()
+    button_key = button_key.lower()
+
+    panel = get_embed_panel(panel_key)
+    if not panel:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
+
+    panel = embed_panel_with_defaults(panel)
+    if button_key in panel["buttons"]:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` already exists in `{panel_key}`."))
+
+    new_button = deep_copy(DEFAULT_EMBED_BUTTON)
+    new_button["label"] = button_key.title()
+    panel["buttons"][button_key] = new_button
+
+    set_embed_panel(panel_key, panel)
+    bot.add_view(EmbedPanelButtonView(panel_key, panel))
+    await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` added to embed panel `{panel_key}`."))
+
+
+@bot.hybrid_command(name="embedbuttondelete", description="Delete a button from an embed panel.")
+@admin_only()
+async def embedbuttondelete(ctx: commands.Context, panel_key: str, button_key: str):
+    panel_key = panel_key.lower()
+    button_key = button_key.lower()
+
+    panel = get_embed_panel(panel_key)
+    if not panel:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
+
+    panel = embed_panel_with_defaults(panel)
+    if button_key not in panel["buttons"]:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` was not found in `{panel_key}`."))
+
+    del panel["buttons"][button_key]
+    set_embed_panel(panel_key, panel)
+    bot.add_view(EmbedPanelButtonView(panel_key, panel))
+    await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` deleted from `{panel_key}`."))
+
+
+@bot.hybrid_command(name="embedpanelset", description="Edit an embed panel field.")
+@admin_only()
+async def embedpanelset(ctx: commands.Context, panel_key: str, field: str, *, value: str):
+    panel_key = panel_key.lower()
+    field = field.lower()
+
+    panel = get_embed_panel(panel_key)
+    if not panel:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
+
+    panel = embed_panel_with_defaults(panel)
+    value = value.strip()
+
+    try:
+        if field == "embed_color":
+            panel[field] = parse_hex_color(value)
+        elif field in ("thumbnail", "image"):
+            panel[field] = None if value.lower() == "none" else value
+        elif field in ("title", "description", "footer"):
+            panel[field] = normalize_newlines(value)
+        else:
+            return await ctx.send(embed=themed_embed("FusionCollab", "Unknown embed panel field."))
+    except ValueError:
+        return await ctx.send(embed=themed_embed("FusionCollab", "Invalid value for that field."))
+
+    set_embed_panel(panel_key, panel)
+    bot.add_view(EmbedPanelButtonView(panel_key, panel))
+    await ctx.send(embed=themed_embed("FusionCollab", f"Updated `{field}` in embed panel `{panel_key}`."))
+
+
+@bot.hybrid_command(name="embedbuttonset", description="Edit an embed panel button field.")
+@admin_only()
+async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str, field: str, *, value: str):
+    panel_key = panel_key.lower()
+    button_key = button_key.lower()
+    field = field.lower()
+
+    panel = get_embed_panel(panel_key)
+    if not panel:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
+
+    panel = embed_panel_with_defaults(panel)
+    button = panel["buttons"].get(button_key)
+    if not button:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` was not found in `{panel_key}`."))
+
+    button = embed_button_with_defaults(button)
+    value = value.strip()
+
+    try:
+        if field == "popup_color":
+            button[field] = parse_hex_color(value)
+        elif field in ("emoji",):
+            button[field] = None if value.lower() == "none" else value
+        elif field in ("style",):
+            if value.lower() not in ("primary", "secondary", "success", "danger"):
+                return await ctx.send(embed=themed_embed("FusionCollab", "Style must be primary, secondary, success, or danger."))
+            button[field] = value.lower()
+        elif field in ("type",):
+            if value.lower() not in ("popup", "link"):
+                return await ctx.send(embed=themed_embed("FusionCollab", "Type must be popup or link."))
+            button[field] = value.lower()
+        elif field in ("url", "popup_thumbnail", "popup_image"):
+            button[field] = None if value.lower() == "none" else value
+        elif field in ("label", "popup_title", "popup_description", "popup_footer"):
+            button[field] = normalize_newlines(value)
+        else:
+            return await ctx.send(embed=themed_embed("FusionCollab", "Unknown embed button field."))
+    except ValueError:
+        return await ctx.send(embed=themed_embed("FusionCollab", "Invalid value for that field."))
+
+    panel["buttons"][button_key] = button
+    set_embed_panel(panel_key, panel)
+    bot.add_view(EmbedPanelButtonView(panel_key, panel))
+    await ctx.send(embed=themed_embed("FusionCollab", f"Updated `{field}` for button `{button_key}` in `{panel_key}`."))
+
+
+@bot.hybrid_command(name="embedpanelsend", description="Send an embed panel into a channel.")
+@admin_only()
+async def embedpanelsend(ctx: commands.Context, panel_key: str, channel: discord.TextChannel):
+    panel_key = panel_key.lower()
+    panel = get_embed_panel(panel_key)
+    if not panel:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
+
+    panel = embed_panel_with_defaults(panel)
+    view = EmbedPanelButtonView(panel_key, panel)
+    await channel.send(embed=build_embed_panel_embed(panel), view=view)
+    await ctx.send(embed=themed_embed("FusionCollab", f"Sent embed panel `{panel_key}` in {channel.mention}."))
+
+
 
 
 # =========================================================
@@ -2662,7 +3207,14 @@ def get_help_suggestion_for_message(content: str, prefix: str) -> Optional[str]:
         f"{prefix}typeadd": f"Use `{prefix}help type` to learn how to add and structure ticket types.",
         f"{prefix}typedelete": f"Use `{prefix}help type` to manage ticket types cleanly.",
         f"{prefix}typeset": f"Use `{prefix}help buttons`, `{prefix}help messages`, `{prefix}help roles`, or `{prefix}help setup` to configure ticket types properly.",
+        f"{prefix}embed": f"Use `{prefix}help embedpanel` for the embed panel guide.",
+        f"{prefix}embedpanel": f"Use `{prefix}help embedpanel` for the embed panel setup guide.",
+        f"{prefix}embedbutton": f"Use `{prefix}help embedpanel` to manage embed panel buttons.",
+        f"{prefix}embedpanelset": f"Use `{prefix}help embedpanel` to edit embed panel content.",
+        f"{prefix}embedbuttonset": f"Use `{prefix}help embedpanel` to edit embed button popup content.",
+        f"{prefix}embedpanelsend": f"Use `{prefix}help embedpanel` to send an embed panel into a channel.",
     }
+
 
     for trigger, response in hints.items():
         if lowered == trigger or lowered.startswith(trigger + " "):
