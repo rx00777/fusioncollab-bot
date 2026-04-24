@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 
 import discord
 from discord.ext import commands
+from discord import ui
 
 
 # =========================================================
@@ -402,12 +403,24 @@ async def send_type_log(guild: discord.Guild, panel_key: str, type_key: str, con
 
 
 async def safe_send(ctx_or_interaction, content=None, embed=None, ephemeral=False, file=None, view=None):
+    kwargs = {}
+    if content is not None:
+        kwargs["content"] = content
+    if embed is not None:
+        kwargs["embed"] = embed
+    if file is not None:
+        kwargs["file"] = file
+    if view is not None:
+        kwargs["view"] = view
+
     if isinstance(ctx_or_interaction, commands.Context):
-        return await ctx_or_interaction.send(content=content, embed=embed, file=file, view=view)
+        return await ctx_or_interaction.send(**kwargs)
+
     if isinstance(ctx_or_interaction, discord.Interaction):
+        kwargs["ephemeral"] = ephemeral
         if ctx_or_interaction.response.is_done():
-            return await ctx_or_interaction.followup.send(content=content, embed=embed, file=file, ephemeral=ephemeral, view=view)
-        return await ctx_or_interaction.response.send_message(content=content, embed=embed, file=file, ephemeral=ephemeral, view=view)
+            return await ctx_or_interaction.followup.send(**kwargs)
+        return await ctx_or_interaction.response.send_message(**kwargs)
 
 
 async def open_ticket_for_member(guild: discord.Guild, member: discord.Member, panel_key: str, type_key: str):
@@ -1000,8 +1013,13 @@ DEFAULT_EMBED_PANEL = {
     "footer": None,
     "thumbnail": None,
     "image": None,
+    "use_components_v2": False,
+    "text_above_image": None,
+    "text_below_image": None,
+    "cv2_layout": None,
     "buttons": {}
 }
+
 
 DEFAULT_EMBED_BUTTON = {
     "label": "About",
@@ -1014,7 +1032,9 @@ DEFAULT_EMBED_BUTTON = {
     "popup_color": None,
     "popup_footer": None,
     "popup_thumbnail": None,
-    "popup_image": None
+    "popup_image": None,
+    "popup_use_components_v2": False,
+    "popup_cv2_layout": None
 }
 
 
@@ -1048,9 +1068,10 @@ def embed_button_with_defaults(button: dict) -> dict:
 def build_embed_panel_embed(panel: dict) -> discord.Embed:
     panel = embed_panel_with_defaults(panel)
 
-    embed = discord.Embed(
-        description=panel["description"]
-    )
+    embed = discord.Embed()
+
+    if panel.get("description"):
+        embed.description = panel["description"]
 
     if panel.get("embed_color") is not None:
         embed.color = panel["embed_color"]
@@ -1073,9 +1094,10 @@ def build_embed_panel_embed(panel: dict) -> discord.Embed:
 def build_embed_popup_embed(button: dict) -> discord.Embed:
     button = embed_button_with_defaults(button)
 
-    embed = discord.Embed(
-        description=button["popup_description"]
-    )
+    embed = discord.Embed()
+
+    if button.get("popup_description"):
+        embed.description = button["popup_description"]
 
     if button.get("popup_color") is not None:
         embed.color = button["popup_color"]
@@ -1093,6 +1115,139 @@ def build_embed_popup_embed(button: dict) -> discord.Embed:
         embed.set_image(url=button["popup_image"])
 
     return embed
+
+
+def parse_cv2_layout_blocks(layout: Optional[str], panel: dict) -> list:
+    panel = embed_panel_with_defaults(panel)
+    blocks = []
+    raw = normalize_newlines(layout or "").strip()
+
+    if not raw:
+        return blocks
+
+    current_type = None
+    current_lines = []
+
+    def flush_current():
+        nonlocal current_type, current_lines, blocks
+
+        if current_type == "text":
+            text_value = "\n".join(current_lines).strip()
+            if text_value:
+                blocks.append(ui.TextDisplay(text_value))
+        elif current_type == "image":
+            image_value = "\n".join(current_lines).strip()
+            if image_value:
+                blocks.append(
+                    ui.MediaGallery(
+                        discord.MediaGalleryItem(media=image_value)
+                    )
+                )
+
+        current_type = None
+        current_lines = []
+
+    for raw_line in raw.splitlines():
+        line = raw_line.rstrip()
+
+        if ":" in line:
+            possible_type, possible_value = line.split(":", 1)
+            possible_type = possible_type.strip().lower()
+
+            if possible_type in ("text", "image"):
+                flush_current()
+                current_type = possible_type
+                current_lines = [possible_value.lstrip()]
+                continue
+
+        if current_type is not None:
+            current_lines.append(line)
+
+    flush_current()
+    return blocks
+
+def build_embed_panel_v2_view(panel: dict) -> ui.LayoutView:
+    panel = embed_panel_with_defaults(panel)
+
+    view = ui.LayoutView()
+    container_items = parse_cv2_layout_blocks(panel.get("cv2_layout"), panel)
+
+    if not container_items:
+        if panel.get("text_above_image"):
+            container_items.append(
+                ui.TextDisplay(panel["text_above_image"])
+            )
+
+        if panel.get("image"):
+            container_items.append(
+                ui.MediaGallery(
+                    discord.MediaGalleryItem(media=panel["image"])
+                )
+            )
+
+        if panel.get("text_below_image"):
+            container_items.append(
+                ui.TextDisplay(panel["text_below_image"])
+            )
+        elif panel.get("description"):
+            container_items.append(
+                ui.TextDisplay(panel["description"])
+            )
+
+    if not container_items:
+        container_items.append(
+            ui.TextDisplay("No content configured.")
+        )
+
+    accent_colour = None
+    if panel.get("embed_color") is not None:
+        accent_colour = discord.Colour(panel["embed_color"])
+
+    view.add_item(
+        ui.Container(
+            *container_items,
+            accent_colour=accent_colour
+        )
+    )
+
+    return view
+
+def build_embed_popup_v2_view(button: dict) -> ui.LayoutView:
+    button = embed_button_with_defaults(button)
+
+    view = ui.LayoutView()
+    layout_text = button.get("popup_cv2_layout")
+    blocks = parse_cv2_layout_blocks(layout_text, {"buttons": {}})
+
+    if button.get("popup_title"):
+        blocks.insert(0, ui.TextDisplay(f"**{button['popup_title']}**"))
+
+    if not button.get("popup_cv2_layout"):
+        if button.get("popup_description"):
+            blocks.append(ui.TextDisplay(button["popup_description"]))
+
+        if button.get("popup_image"):
+            blocks.append(
+                ui.MediaGallery(
+                    discord.MediaGalleryItem(media=button["popup_image"])
+                )
+            )
+
+    if not blocks:
+        blocks.append(ui.TextDisplay("No content configured."))
+
+    accent_colour = None
+    if button.get("popup_color") is not None:
+        accent_colour = discord.Colour(button["popup_color"])
+
+    view.add_item(
+        ui.Container(
+            *blocks,
+            accent_colour=accent_colour
+        )
+    )
+
+    return view
 
 
 class EmbedPanelButtonView(discord.ui.View):
@@ -1135,12 +1290,14 @@ class EmbedPanelButtonView(discord.ui.View):
             if not button_data:
                 return await interaction.response.send_message("Embed button not found.", ephemeral=True)
 
-            embed = build_embed_popup_embed(button_data)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            if button_data.get("popup_use_components_v2"):
+                view = build_embed_popup_v2_view(button_data)
+                await interaction.followup.send(view=view, ephemeral=True)
+            else:
+                embed = build_embed_popup_embed(button_data)
+                await interaction.followup.send(embed=embed, ephemeral=True)
 
         return callback
-
-
 
 
 
@@ -1255,7 +1412,12 @@ def build_help_embed(category: str, prefix: str) -> discord.Embed:
                     "button_emoji\n"
                     "button_style\n"
                     "footer\n"
-                    "thumbnail"
+                    "thumbnail\n"
+                    "image\n"
+                    "use_components_v2\n"
+                    "text_above_image\n"
+                    "text_below_image\n"
+                    "cv2_layout"
                 ), True),
                 ("Type Fields", make_code_block(
                     "label\n"
@@ -1511,7 +1673,7 @@ EMBED_PANEL_GUIDE_PAGES = [
         "key": "overview",
         "title": "FusionCollab Embed Panels",
         "step": "Overview",
-        "summary": "Embed panels let you send a styled message with multiple buttons that open popup info embeds or link users elsewhere.",
+        "summary": "Embed panels let you send a styled message with multiple buttons that open popup info embeds or link users elsewhere. CV2 mode is also available for richer image-first layouts.",
         "usage": (
             ".embedpanelcreate <panel_key>\n"
             ".embedbuttonadd <panel_key> <button_key>\n"
@@ -1557,14 +1719,17 @@ EMBED_PANEL_GUIDE_PAGES = [
             ".embedbuttonset <panel_key> <button_key> emoji <emoji>\n"
             ".embedbuttonset <panel_key> <button_key> style <primary|secondary|success|danger>\n"
             ".embedbuttonset <panel_key> <button_key> type <popup|link>\n"
-            ".embedbuttonset <panel_key> <button_key> url <url>"
+            ".embedbuttonset <panel_key> <button_key> url <url>\n"
+            ".embedbuttonset <panel_key> <button_key> popup_use_components_v2 <true|false>\n"
+            ".embedbuttonset <panel_key> <button_key> popup_cv2_layout <layout>"
         ),
         "example": (
             ".embedbuttonadd serverinfo about\n"
             ".embedbuttonset serverinfo about label About Server\n"
             ".embedbuttonset serverinfo about emoji <:WHITETICK:1495855082426728488>\n"
             ".embedbuttonset serverinfo about style primary\n"
-            ".embedbuttonset serverinfo about type popup"
+            ".embedbuttonset serverinfo about type popup\n"
+            ".embedbuttonset serverinfo about popup_use_components_v2 true"
         ),
         "testing": "Check that the buttons show the correct text, emoji, and style on the main embed panel."
     },
@@ -1585,7 +1750,9 @@ EMBED_PANEL_GUIDE_PAGES = [
             ".embedbuttonset serverinfo about popup_title About FusionCollab\n"
             ".embedbuttonset serverinfo about popup_description Welcome to our server.\\nPlease read the info carefully.\n"
             ".embedbuttonset serverinfo about popup_color #18191C\n"
-            ".embedbuttonset serverinfo about popup_footer FusionCollab"
+            ".embedbuttonset serverinfo about popup_footer FusionCollab\n"
+            ".embedbuttonset serverinfo about popup_use_components_v2 true\n"
+            ".embedbuttonset serverinfo about popup_cv2_layout text:**About FusionCollab**\\nWelcome to our server.\\n\\nimage:https://your-image-link"
         ),
         "testing": "Click the popup button and confirm the popup embed opens correctly and can be dismissed."
     },
@@ -2905,12 +3072,21 @@ async def embedpanelset(ctx: commands.Context, panel_key: str, field: str, *, va
             panel[field] = None if value.lower() == "none" else parse_hex_color(value)
         elif field in ("thumbnail", "image"):
             panel[field] = None if value.lower() == "none" else value
-        elif field in ("title", "description", "footer"):
-            panel[field] = normalize_newlines(value)
+        elif field == "use_components_v2":
+            lowered = value.lower()
+            if lowered in ("true", "yes", "on", "1"):
+                panel[field] = True
+            elif lowered in ("false", "no", "off", "0"):
+                panel[field] = False
+            else:
+                return await ctx.send(embed=themed_embed("FusionCollab", "use_components_v2 must be true or false."))
+        elif field in ("title", "description", "footer", "text_above_image", "text_below_image", "cv2_layout"):
+            panel[field] = None if value.lower() == "none" else normalize_newlines(value)
         else:
             return await ctx.send(embed=themed_embed("FusionCollab", "Unknown embed panel field."))
     except ValueError:
         return await ctx.send(embed=themed_embed("FusionCollab", "Invalid value for that field."))
+
 
     set_embed_panel(panel_key, panel)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
@@ -2938,7 +3114,7 @@ async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str,
 
     try:
         if field == "popup_color":
-            button[field] = parse_hex_color(value)
+            button[field] = None if value.lower() == "none" else parse_hex_color(value)
         elif field in ("emoji",):
             button[field] = None if value.lower() == "none" else value
         elif field in ("style",):
@@ -2951,12 +3127,21 @@ async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str,
             button[field] = value.lower()
         elif field in ("url", "popup_thumbnail", "popup_image"):
             button[field] = None if value.lower() == "none" else value
-        elif field in ("label", "popup_title", "popup_description", "popup_footer"):
-            button[field] = normalize_newlines(value)
+        elif field == "popup_use_components_v2":
+            lowered = value.lower()
+            if lowered in ("true", "yes", "on", "1"):
+                button[field] = True
+            elif lowered in ("false", "no", "off", "0"):
+                button[field] = False
+            else:
+                return await ctx.send(embed=themed_embed("FusionCollab", "popup_use_components_v2 must be true or false."))
+        elif field in ("label", "popup_title", "popup_description", "popup_footer", "popup_cv2_layout"):
+            button[field] = None if value.lower() == "none" else normalize_newlines(value)
         else:
             return await ctx.send(embed=themed_embed("FusionCollab", "Unknown embed button field."))
     except ValueError:
         return await ctx.send(embed=themed_embed("FusionCollab", "Invalid value for that field."))
+
 
     panel["buttons"][button_key] = button
     set_embed_panel(panel_key, panel)
@@ -2973,9 +3158,22 @@ async def embedpanelsend(ctx: commands.Context, panel_key: str, channel: discord
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
 
     panel = embed_panel_with_defaults(panel)
-    view = EmbedPanelButtonView(panel_key, panel)
-    await channel.send(embed=build_embed_panel_embed(panel), view=view)
+
+    if panel.get("use_components_v2"):
+        view = build_embed_panel_v2_view(panel)
+        button_view = EmbedPanelButtonView(panel_key, panel)
+
+        button_items = list(button_view.children)
+        for i in range(0, len(button_items), 5):
+            view.add_item(ui.ActionRow(*button_items[i:i + 5]))
+
+        await channel.send(view=view)
+    else:
+        view = EmbedPanelButtonView(panel_key, panel)
+        await channel.send(embed=build_embed_panel_embed(panel), view=view)
+
     await ctx.send(embed=themed_embed("FusionCollab", f"Sent embed panel `{panel_key}` in {channel.mention}."))
+
 
 
 
@@ -3223,6 +3421,11 @@ def get_help_suggestion_for_message(content: str, prefix: str) -> Optional[str]:
         f"{prefix}embedpanelset": f"Use `{prefix}help embedpanel` to edit embed panel content.",
         f"{prefix}embedbuttonset": f"Use `{prefix}help embedpanel` to edit embed button popup content.",
         f"{prefix}embedpanelsend": f"Use `{prefix}help embedpanel` to send an embed panel into a channel.",
+        f"{prefix}cv2": f"FusionCollab CV2 is part of the embed panel system. Use `{prefix}embedpanelcreate`, `{prefix}embedpanelset <panel> use_components_v2 true`, and `{prefix}embedpanelset <panel> cv2_layout ...`.",
+        f"{prefix}embedcv2": f"FusionCollab CV2 is part of the embed panel system. Use `{prefix}embedpanelcreate`, `{prefix}embedpanelset <panel> use_components_v2 true`, and `{prefix}embedpanelset <panel> cv2_layout ...`.",
+        f"{prefix}cv2embed": f"FusionCollab CV2 is part of the embed panel system. Use `{prefix}embedpanelcreate`, `{prefix}embedpanelset <panel> use_components_v2 true`, and `{prefix}embedpanelset <panel> cv2_layout ...`.",
+        f"{prefix}popupcv2": f"FusionCollab popup CV2 is part of embed buttons. Use `{prefix}embedbuttonset <panel> <button> popup_use_components_v2 true` and `{prefix}embedbuttonset <panel> <button> popup_cv2_layout ...`.",
+
     }
 
 
