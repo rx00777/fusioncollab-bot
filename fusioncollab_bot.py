@@ -994,10 +994,10 @@ class TicketStatsView(discord.ui.View):
 DEFAULT_DATA.setdefault("embed_panels", {})
 
 DEFAULT_EMBED_PANEL = {
-    "title": "FusionCollab",
+    "title": None,
     "description": "Select an option below.",
-    "embed_color": HELP_COLOR,
-    "footer": "FusionCollab",
+    "embed_color": None,
+    "footer": None,
     "thumbnail": None,
     "image": None,
     "buttons": {}
@@ -1009,10 +1009,10 @@ DEFAULT_EMBED_BUTTON = {
     "style": "secondary",
     "type": "popup",
     "url": None,
-    "popup_title": "FusionCollab",
+    "popup_title": None,
     "popup_description": "Edit this embed button content.",
-    "popup_color": HELP_COLOR,
-    "popup_footer": "FusionCollab",
+    "popup_color": None,
+    "popup_footer": None,
     "popup_thumbnail": None,
     "popup_image": None
 }
@@ -1049,12 +1049,17 @@ def build_embed_panel_embed(panel: dict) -> discord.Embed:
     panel = embed_panel_with_defaults(panel)
 
     embed = discord.Embed(
-        title=panel["title"],
-        description=panel["description"],
-        color=panel["embed_color"],
-        timestamp=now_utc()
+        description=panel["description"]
     )
-    embed.set_footer(text=panel.get("footer", "FusionCollab"))
+
+    if panel.get("embed_color") is not None:
+        embed.color = panel["embed_color"]
+
+    if panel.get("title"):
+        embed.title = panel["title"]
+
+    if panel.get("footer"):
+        embed.set_footer(text=panel["footer"])
 
     if panel.get("thumbnail"):
         embed.set_thumbnail(url=panel["thumbnail"])
@@ -1069,12 +1074,17 @@ def build_embed_popup_embed(button: dict) -> discord.Embed:
     button = embed_button_with_defaults(button)
 
     embed = discord.Embed(
-        title=button["popup_title"],
-        description=button["popup_description"],
-        color=button["popup_color"],
-        timestamp=now_utc()
+        description=button["popup_description"]
     )
-    embed.set_footer(text=button.get("popup_footer", "FusionCollab"))
+
+    if button.get("popup_color") is not None:
+        embed.color = button["popup_color"]
+
+    if button.get("popup_title"):
+        embed.title = button["popup_title"]
+
+    if button.get("popup_footer"):
+        embed.set_footer(text=button["popup_footer"])
 
     if button.get("popup_thumbnail"):
         embed.set_thumbnail(url=button["popup_thumbnail"])
@@ -2892,7 +2902,7 @@ async def embedpanelset(ctx: commands.Context, panel_key: str, field: str, *, va
 
     try:
         if field == "embed_color":
-            panel[field] = parse_hex_color(value)
+            panel[field] = None if value.lower() == "none" else parse_hex_color(value)
         elif field in ("thumbnail", "image"):
             panel[field] = None if value.lower() == "none" else value
         elif field in ("title", "description", "footer"):
