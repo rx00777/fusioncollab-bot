@@ -1292,10 +1292,10 @@ class EmbedPanelButtonView(discord.ui.View):
 
             if button_data.get("popup_use_components_v2"):
                 view = build_embed_popup_v2_view(button_data)
-                await interaction.followup.send(view=view, ephemeral=True)
+                await interaction.response.send_message(view=view, ephemeral=True)
             else:
                 embed = build_embed_popup_embed(button_data)
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
 
         return callback
 
