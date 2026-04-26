@@ -2729,6 +2729,7 @@ class ClosedTicketView(discord.ui.View):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} ({bot.user.id})")
+    print(f"Guild count: {len(bot.guilds)}")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.competing,
@@ -2759,6 +2760,17 @@ async def on_ready():
         print(f"Synced {len(synced)} global app commands.")
     except Exception as e:
         print(f"Global sync failed: {e}")
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    print(f"Joined guild: {guild.name} ({guild.id})")
+    print(f"Guild count: {len(bot.guilds)}")
+
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    print(f"Removed from guild: {guild.name} ({guild.id})")
+    print(f"Guild count: {len(bot.guilds)}")
 
 
 # =========================================================
