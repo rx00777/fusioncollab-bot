@@ -3763,7 +3763,7 @@ async def on_message(message: discord.Message):
 
     if bot.user and message.guild:
         content = (message.content or "").strip()
-        if content in {bot.user.mention, f"<@!{bot.user.id}>"}:
+        if bot.user.mention in content or f"<@!{bot.user.id}>" in content:
             prefix = data.get("prefix", ".")
             if isinstance(message.author, discord.Member):
                 embed = build_mention_prefix_embed(message.author, prefix)
