@@ -26,7 +26,8 @@ DEFAULT_DATA = {
     "prefix": ".",
     "panels": {},
     "tickets": {},
-    "claims": {}
+    "claims": {},
+    "welcome": {}
 }
 
 DEFAULT_PANEL = {
@@ -1037,6 +1038,22 @@ DEFAULT_EMBED_BUTTON = {
     "popup_cv2_layout": None
 }
 
+DEFAULT_WELCOME = {
+    "enabled": False,
+    "channel_id": None,
+    "content": None,
+    "title": None,
+    "description": None,
+    "embed_color": None,
+    "footer": None,
+    "thumbnail": None,
+    "image": None,
+    "use_avatar_thumbnail": False,
+    "use_avatar_image": False,
+    "timestamp": False,
+    "buttons": []
+}
+
 
 def get_embed_panel(panel_key: str) -> Optional[dict]:
     return data.setdefault("embed_panels", {}).get(panel_key.lower())
@@ -1063,6 +1080,98 @@ def embed_button_with_defaults(button: dict) -> dict:
     merged = deep_copy(DEFAULT_EMBED_BUTTON)
     merged.update(button)
     return merged
+
+def get_welcome_config() -> dict:
+    config = data.setdefault("welcome", {})
+    merged = deep_copy(DEFAULT_WELCOME)
+    merged.update(config)
+    merged.setdefault("buttons", [])
+    return merged
+
+
+def set_welcome_config(config: dict):
+    data["welcome"] = config
+    save_data()
+
+def format_welcome_text(template: Optional[str], member: discord.Member) -> Optional[str]:
+    if template is None:
+        return None
+
+    guild = member.guild
+    return (
+        str(template)
+        .replace("{user}", member.mention)
+        .replace("{user.name}", member.display_name)
+        .replace("{user.avatar}", member.display_avatar.url)
+        .replace("{guild}", guild.name)
+        .replace("{guild.name}", guild.name)
+        .replace("{membercount}", str(guild.member_count or 0))
+    )
+
+def build_welcome_embed(member: discord.Member) -> discord.Embed:
+    config = get_welcome_config()
+
+    embed = discord.Embed()
+
+    title = format_welcome_text(config.get("title"), member)
+    description = format_welcome_text(config.get("description"), member)
+    footer = format_welcome_text(config.get("footer"), member)
+    image = format_welcome_text(config.get("image"), member)
+    thumbnail = format_welcome_text(config.get("thumbnail"), member)
+
+    if title:
+        embed.title = title
+
+    if description:
+        embed.description = description
+
+    if config.get("embed_color") is not None:
+        embed.color = config["embed_color"]
+
+    if footer:
+        embed.set_footer(text=footer)
+
+    if config.get("use_avatar_thumbnail"):
+        embed.set_thumbnail(url=member.display_avatar.url)
+    elif thumbnail:
+        embed.set_thumbnail(url=thumbnail)
+
+    if config.get("use_avatar_image"):
+        embed.set_image(url=member.display_avatar.url)
+    elif image:
+        embed.set_image(url=image)
+
+    if config.get("timestamp"):
+        embed.timestamp = now_utc()
+
+    return embed
+
+
+def build_welcome_view() -> Optional[discord.ui.View]:
+    config = get_welcome_config()
+    buttons = config.get("buttons", [])
+
+    if not buttons:
+        return None
+
+    view = discord.ui.View(timeout=None)
+
+    for button in buttons[:5]:
+        label = str(button.get("label") or "Link")[:80]
+        url = str(button.get("url") or "").strip()
+        if not url:
+            continue
+
+        view.add_item(
+            discord.ui.Button(
+                label=label,
+                emoji=parse_button_emoji(button.get("emoji")),
+                style=discord.ButtonStyle.link,
+                url=url
+            )
+        )
+
+    return view
 
 
 def build_embed_panel_embed(panel: dict) -> discord.Embed:
@@ -1169,7 +1278,7 @@ def parse_cv2_layout_blocks(layout: Optional[str], panel: dict) -> list:
 def build_embed_panel_v2_view(panel: dict) -> ui.LayoutView:
     panel = embed_panel_with_defaults(panel)
 
-    view = ui.LayoutView()
+    view = ui.LayoutView(timeout=None)
     container_items = parse_cv2_layout_blocks(panel.get("cv2_layout"), panel)
 
     if not container_items:
@@ -1215,7 +1324,7 @@ def build_embed_panel_v2_view(panel: dict) -> ui.LayoutView:
 def build_embed_popup_v2_view(button: dict) -> ui.LayoutView:
     button = embed_button_with_defaults(button)
 
-    view = ui.LayoutView()
+    view = ui.LayoutView(timeout=None)
     layout_text = button.get("popup_cv2_layout")
     blocks = parse_cv2_layout_blocks(layout_text, {"buttons": {}})
 
@@ -1325,8 +1434,8 @@ def build_help_embed(category: str, prefix: str) -> discord.Embed:
                 f"**Admin Setup:** `{prefix}help setup`"
             ),
             "fields": [
-                ("Quick Start", f"`{prefix}help setup` gives a full guided setup flow for admins.", False),
-                ("Direct Guides", f"`{prefix}help panel` • `{prefix}help type` • `{prefix}help buttons` • `{prefix}help test`", False),
+                ("Quick Start", f"`{prefix}help setup` covers the ticket system setup flow.\n`{prefix}help embedpanel` covers embed panels and CV2 layouts.\n`{prefix}welcome` helps configure the welcome system.", False),
+                ("Direct Guides", f"`{prefix}help panel` • `{prefix}help type` • `{prefix}help buttons` • `{prefix}help test` • `{prefix}help embedpanel` • `{prefix}welcome`", False),
             ],
             "footer": "FusionCollab • Main Help"
         },
@@ -2141,6 +2250,11 @@ async def help_cmd(ctx: commands.Context, *, topic: Optional[str] = None):
     view = HelpView(ctx.author.id, prefix)
     await ctx.send(embed=embed, view=view)
 
+# NOTE:
+# The custom_id values used by persistent buttons/selects below are compatibility IDs.
+# Do not change existing custom_id formats unless you also intentionally preserve
+# backward compatibility for already-sent panel/ticket messages in live servers.
+
 
 
 # =========================================================
@@ -2181,16 +2295,18 @@ class TicketTypeSelect(discord.ui.Select):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message("This only works in a server.", ephemeral=True)
 
+        await interaction.response.defer(ephemeral=True)
+
         channel, error = await open_ticket_for_member(interaction.guild, interaction.user, self.panel_key, self.values[0])
         if error:
-            return await interaction.response.send_message(error, ephemeral=True)
+            return await interaction.followup.send(error, ephemeral=True)
 
-        await interaction.response.send_message(f"Created {channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"Created {channel.mention}", ephemeral=True)
 
 
 class TicketTypeSelectView(discord.ui.View):
     def __init__(self, panel_key: str, panel: dict):
-        super().__init__(timeout=120)
+        super().__init__(timeout=None)
         self.add_item(TicketTypeSelect(panel_key, panel))
 
 
@@ -2402,7 +2518,7 @@ async def close_ticket_channel(channel: discord.TextChannel, actor: discord.Memb
 
 class ConfirmCloseView(discord.ui.View):
     def __init__(self, requester_id: int, panel_key: Optional[str] = None, type_key: Optional[str] = None):
-        super().__init__(timeout=120)
+        super().__init__(timeout=None)
         self.requester_id = requester_id
 
         ticket_type = deep_copy(DEFAULT_TYPE)
@@ -3174,6 +3290,225 @@ async def embedpanelsend(ctx: commands.Context, panel_key: str, channel: discord
 
     await ctx.send(embed=themed_embed("FusionCollab", f"Sent embed panel `{panel_key}` in {channel.mention}."))
 
+@bot.hybrid_group(name="welcome", description="Manage the server welcome message.")
+@admin_only()
+async def welcome(ctx: commands.Context):
+    if ctx.invoked_subcommand is None:
+        embed = themed_embed(
+            "FusionCollab Welcome",
+            "Use subcommands like `channel`, `content`, `title`, `description`, `footer`, `embed_color`, `thumbnail`, `image`, `use_avatar_thumbnail`, `use_avatar_image`, `timestamp`, `enable`, `disable`, and `test`."
+        )
+        await ctx.send(embed=embed)
+
+
+@welcome.command(name="channel", description="Set the welcome channel.")
+@admin_only()
+async def welcome_channel(ctx: commands.Context, channel: discord.TextChannel):
+    config = get_welcome_config()
+    config["channel_id"] = channel.id
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome channel set to {channel.mention}."))
+
+
+@welcome.command(name="content", description="Set the plain welcome message content.")
+@admin_only()
+async def welcome_content(ctx: commands.Context, *, value: str):
+    config = get_welcome_config()
+    config["content"] = None if value.lower() == "none" else normalize_newlines(value)
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome content updated."))
+
+
+@welcome.command(name="title", description="Set the welcome embed title.")
+@admin_only()
+async def welcome_title(ctx: commands.Context, *, value: str):
+    config = get_welcome_config()
+    config["title"] = None if value.lower() == "none" else normalize_newlines(value)
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome title updated."))
+
+
+@welcome.command(name="description", description="Set the welcome embed description.")
+@admin_only()
+async def welcome_description(ctx: commands.Context, *, value: str):
+    config = get_welcome_config()
+    config["description"] = None if value.lower() == "none" else normalize_newlines(value)
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome description updated."))
+
+
+@welcome.command(name="footer", description="Set the welcome embed footer.")
+@admin_only()
+async def welcome_footer(ctx: commands.Context, *, value: str):
+    config = get_welcome_config()
+    config["footer"] = None if value.lower() == "none" else normalize_newlines(value)
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome footer updated."))
+
+
+@welcome.command(name="embed_color", description="Set the welcome embed color.")
+@admin_only()
+async def welcome_embed_color(ctx: commands.Context, value: str):
+    config = get_welcome_config()
+    try:
+        config["embed_color"] = None if value.lower() == "none" else parse_hex_color(value)
+    except ValueError:
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Invalid color. Use a hex code like `#F2F3F5` or `none`."))
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome embed color updated."))
+
+
+@welcome.command(name="thumbnail", description="Set the welcome embed thumbnail URL.")
+@admin_only()
+async def welcome_thumbnail(ctx: commands.Context, *, value: str):
+    config = get_welcome_config()
+    config["thumbnail"] = None if value.lower() == "none" else value.strip()
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome thumbnail updated."))
+
+
+@welcome.command(name="image", description="Set the welcome embed image URL.")
+@admin_only()
+async def welcome_image(ctx: commands.Context, *, value: str):
+    config = get_welcome_config()
+    config["image"] = None if value.lower() == "none" else value.strip()
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome image updated."))
+
+
+@welcome.command(name="use_avatar_thumbnail", description="Toggle using the joining user's avatar as thumbnail.")
+@admin_only()
+async def welcome_use_avatar_thumbnail(ctx: commands.Context, value: str):
+    config = get_welcome_config()
+    lowered = value.lower()
+    if lowered in ("true", "yes", "on", "1"):
+        config["use_avatar_thumbnail"] = True
+    elif lowered in ("false", "no", "off", "0"):
+        config["use_avatar_thumbnail"] = False
+    else:
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Value must be true or false."))
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome avatar thumbnail setting updated."))
+
+
+@welcome.command(name="use_avatar_image", description="Toggle using the joining user's avatar as image.")
+@admin_only()
+async def welcome_use_avatar_image(ctx: commands.Context, value: str):
+    config = get_welcome_config()
+    lowered = value.lower()
+    if lowered in ("true", "yes", "on", "1"):
+        config["use_avatar_image"] = True
+    elif lowered in ("false", "no", "off", "0"):
+        config["use_avatar_image"] = False
+    else:
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Value must be true or false."))
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome avatar image setting updated."))
+
+
+@welcome.command(name="timestamp", description="Toggle the welcome embed timestamp.")
+@admin_only()
+async def welcome_timestamp(ctx: commands.Context, value: str):
+    config = get_welcome_config()
+    lowered = value.lower()
+    if lowered in ("true", "yes", "on", "1"):
+        config["timestamp"] = True
+    elif lowered in ("false", "no", "off", "0"):
+        config["timestamp"] = False
+    else:
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Value must be true or false."))
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome timestamp setting updated."))
+
+
+@welcome.command(name="enable", description="Enable welcome messages.")
+@admin_only()
+async def welcome_enable(ctx: commands.Context):
+    config = get_welcome_config()
+    if not config.get("channel_id"):
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Set a welcome channel first using `.welcome channel #channel`."))
+    config["enabled"] = True
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome messages enabled."))
+
+
+@welcome.command(name="disable", description="Disable welcome messages.")
+@admin_only()
+async def welcome_disable(ctx: commands.Context):
+    config = get_welcome_config()
+    config["enabled"] = False
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome messages disabled."))
+
+
+@welcome.command(name="test", description="Send a test welcome message.")
+@admin_only()
+async def welcome_test(ctx: commands.Context):
+    if not isinstance(ctx.author, discord.Member):
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "This command only works in a server."))
+
+    config = get_welcome_config()
+    content = format_welcome_text(config.get("content"), ctx.author)
+    embed = build_welcome_embed(ctx.author)
+    view = build_welcome_view()
+
+    await ctx.send(
+        content=content,
+        embed=embed if (embed.title or embed.description or embed.color or embed.footer or embed.image or embed.thumbnail or embed.timestamp) else None,
+        view=view
+    )
+
+@welcome.command(name="buttonadd", description="Add a welcome link button.")
+@admin_only()
+async def welcome_buttonadd(ctx: commands.Context, key: str, url: str, *, label: str):
+    config = get_welcome_config()
+    buttons = config.setdefault("buttons", [])
+
+    key = key.lower().strip()
+    if any(str(button.get("key", "")).lower() == key for button in buttons):
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` already exists."))
+
+    buttons.append({
+        "key": key,
+        "label": label.strip(),
+        "url": url.strip(),
+        "emoji": None
+    })
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` added."))
+
+
+@welcome.command(name="buttonemoji", description="Set a welcome button emoji.")
+@admin_only()
+async def welcome_buttonemoji(ctx: commands.Context, key: str, *, value: str):
+    config = get_welcome_config()
+    buttons = config.setdefault("buttons", [])
+    key = key.lower().strip()
+
+    for button in buttons:
+        if str(button.get("key", "")).lower() == key:
+            button["emoji"] = None if value.lower() == "none" else value.strip()
+            set_welcome_config(config)
+            return await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` emoji updated."))
+
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` was not found."))
+
+
+@welcome.command(name="buttondelete", description="Delete a welcome button.")
+@admin_only()
+async def welcome_buttondelete(ctx: commands.Context, key: str):
+    config = get_welcome_config()
+    buttons = config.setdefault("buttons", [])
+    key = key.lower().strip()
+
+    new_buttons = [button for button in buttons if str(button.get("key", "")).lower() != key]
+    if len(new_buttons) == len(buttons):
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` was not found."))
+
+    config["buttons"] = new_buttons
+    set_welcome_config(config)
+    await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` deleted."))
+
 
 
 
@@ -3378,6 +3713,38 @@ def build_mention_prefix_embed(member: discord.Member, prefix: str) -> discord.E
     return embed
 
 @bot.event
+async def on_member_join(member: discord.Member):
+    config = get_welcome_config()
+    if not config.get("enabled"):
+        return
+
+    channel_id = config.get("channel_id")
+    if not channel_id:
+        return
+
+    channel = member.guild.get_channel(int(channel_id))
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    content = format_welcome_text(config.get("content"), member)
+    embed = build_welcome_embed(member)
+    view = build_welcome_view()
+
+    embed_to_send = None
+    if (
+        embed.title
+        or embed.description
+        or embed.color
+        or embed.footer
+        or embed.image
+        or embed.thumbnail
+        or embed.timestamp
+    ):
+        embed_to_send = embed
+
+    await channel.send(content=content, embed=embed_to_send, view=view)
+
+@bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
@@ -3425,6 +3792,7 @@ def get_help_suggestion_for_message(content: str, prefix: str) -> Optional[str]:
         f"{prefix}embedcv2": f"FusionCollab CV2 is part of the embed panel system. Use `{prefix}embedpanelcreate`, `{prefix}embedpanelset <panel> use_components_v2 true`, and `{prefix}embedpanelset <panel> cv2_layout ...`.",
         f"{prefix}cv2embed": f"FusionCollab CV2 is part of the embed panel system. Use `{prefix}embedpanelcreate`, `{prefix}embedpanelset <panel> use_components_v2 true`, and `{prefix}embedpanelset <panel> cv2_layout ...`.",
         f"{prefix}popupcv2": f"FusionCollab popup CV2 is part of embed buttons. Use `{prefix}embedbuttonset <panel> <button> popup_use_components_v2 true` and `{prefix}embedbuttonset <panel> <button> popup_cv2_layout ...`.",
+        f"{prefix}welcome": f"Use `{prefix}welcome channel #channel`, `{prefix}welcome title ...`, `{prefix}welcome description ...`, `{prefix}welcome enable`, and `{prefix}welcome test` to set up the welcome system.",
 
     }
 
