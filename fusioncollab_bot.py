@@ -1435,7 +1435,7 @@ def build_help_embed(category: str, prefix: str) -> discord.Embed:
             ),
             "fields": [
                 ("Quick Start", f"`{prefix}help setup` covers the ticket system setup flow.\n`{prefix}help embedpanel` covers embed panels and CV2 layouts.\n`{prefix}welcome` helps configure the welcome system.", False),
-                ("Direct Guides", f"`{prefix}help panel` • `{prefix}help type` • `{prefix}help buttons` • `{prefix}help test` • `{prefix}help embedpanel` • `{prefix}welcome`", False),
+                ("Direct Guides", f"`{prefix}help panel` • `{prefix}help type` • `{prefix}help buttons` • `{prefix}help test` • `{prefix}help embedpanel` • `{prefix}welcome`\n`{prefix}welcome test` sends a preview before enabling it live.", False),
             ],
             "footer": "FusionCollab • Main Help"
         },
