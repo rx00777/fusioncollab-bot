@@ -17,7 +17,7 @@ from discord import ui
 # =========================================================
 
 TOKEN = os.getenv("TOKEN", "")
-DATA_FILE = Path("fusioncollab_v2_data.json")
+DATA_FILE = Path("/data/fusioncollab_v2_data.json") if Path("/data").exists() else Path("fusioncollab_v2_data.json")
 
 HELP_COLOR = 0x18191C
 DEFAULT_EMBED_COLOR = 0x2B2D31
