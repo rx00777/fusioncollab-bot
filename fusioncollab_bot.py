@@ -27,7 +27,8 @@ DEFAULT_DATA = {
     "panels": {},
     "tickets": {},
     "claims": {},
-    "welcome": {}
+    "welcome": {},
+    "guilds": {}
 }
 
 DEFAULT_PANEL = {
@@ -106,6 +107,24 @@ def save_data():
 
 
 data = load_data()
+
+def get_guild_store(guild_id: int) -> dict:
+    guilds = data.setdefault("guilds", {})
+    key = str(guild_id)
+
+    if key not in guilds or not isinstance(guilds[key], dict):
+        guilds[key] = {
+            "panels": {},
+            "embed_panels": {},
+            "welcome": {}
+        }
+        save_data()
+
+    store = guilds[key]
+    store.setdefault("panels", {})
+    store.setdefault("embed_panels", {})
+    store.setdefault("welcome", {})
+    return store
 
 
 # =========================================================
@@ -1081,16 +1100,23 @@ def embed_button_with_defaults(button: dict) -> dict:
     merged.update(button)
     return merged
 
-def get_welcome_config() -> dict:
-    config = data.setdefault("welcome", {})
+def get_welcome_config(guild_id: Optional[int] = None) -> dict:
+    if guild_id is not None:
+        config = get_guild_store(guild_id).setdefault("welcome", {})
+    else:
+        config = data.setdefault("welcome", {})
+
     merged = deep_copy(DEFAULT_WELCOME)
     merged.update(config)
     merged.setdefault("buttons", [])
     return merged
 
 
-def set_welcome_config(config: dict):
-    data["welcome"] = config
+def set_welcome_config(config: dict, guild_id: Optional[int] = None):
+    if guild_id is not None:
+        get_guild_store(guild_id)["welcome"] = config
+    else:
+        data["welcome"] = config
     save_data()
 
 def format_welcome_text(template: Optional[str], member: discord.Member) -> Optional[str]:
@@ -1109,7 +1135,7 @@ def format_welcome_text(template: Optional[str], member: discord.Member) -> Opti
     )
 
 def build_welcome_embed(member: discord.Member) -> discord.Embed:
-    config = get_welcome_config()
+    config = get_welcome_config(member.guild.id)
 
     embed = discord.Embed()
 
@@ -1147,8 +1173,8 @@ def build_welcome_embed(member: discord.Member) -> discord.Embed:
     return embed
 
 
-def build_welcome_view() -> Optional[discord.ui.View]:
-    config = get_welcome_config()
+def build_welcome_view(guild_id: int) -> Optional[discord.ui.View]:
+    config = get_welcome_config(guild_id)
     buttons = config.get("buttons", [])
 
     if not buttons:
@@ -3305,6 +3331,9 @@ async def embedpanelsend(ctx: commands.Context, panel_key: str, channel: discord
 @bot.hybrid_group(name="welcome", description="Manage the server welcome message.")
 @admin_only()
 async def welcome(ctx: commands.Context):
+    if not ctx.guild:
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "This command only works in a server."))
+
     if ctx.invoked_subcommand is None:
         embed = themed_embed(
             "FusionCollab Welcome",
@@ -3316,82 +3345,82 @@ async def welcome(ctx: commands.Context):
 @welcome.command(name="channel", description="Set the welcome channel.")
 @admin_only()
 async def welcome_channel(ctx: commands.Context, channel: discord.TextChannel):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["channel_id"] = channel.id
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome channel set to {channel.mention}."))
 
 
 @welcome.command(name="content", description="Set the plain welcome message content.")
 @admin_only()
 async def welcome_content(ctx: commands.Context, *, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["content"] = None if value.lower() == "none" else normalize_newlines(value)
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome content updated."))
 
 
 @welcome.command(name="title", description="Set the welcome embed title.")
 @admin_only()
 async def welcome_title(ctx: commands.Context, *, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["title"] = None if value.lower() == "none" else normalize_newlines(value)
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome title updated."))
 
 
 @welcome.command(name="description", description="Set the welcome embed description.")
 @admin_only()
 async def welcome_description(ctx: commands.Context, *, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["description"] = None if value.lower() == "none" else normalize_newlines(value)
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome description updated."))
 
 
 @welcome.command(name="footer", description="Set the welcome embed footer.")
 @admin_only()
 async def welcome_footer(ctx: commands.Context, *, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["footer"] = None if value.lower() == "none" else normalize_newlines(value)
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome footer updated."))
 
 
 @welcome.command(name="embed_color", description="Set the welcome embed color.")
 @admin_only()
 async def welcome_embed_color(ctx: commands.Context, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     try:
         config["embed_color"] = None if value.lower() == "none" else parse_hex_color(value)
     except ValueError:
         return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Invalid color. Use a hex code like `#F2F3F5` or `none`."))
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome embed color updated."))
 
 
 @welcome.command(name="thumbnail", description="Set the welcome embed thumbnail URL.")
 @admin_only()
 async def welcome_thumbnail(ctx: commands.Context, *, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["thumbnail"] = None if value.lower() == "none" else value.strip()
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome thumbnail updated."))
 
 
 @welcome.command(name="image", description="Set the welcome embed image URL.")
 @admin_only()
 async def welcome_image(ctx: commands.Context, *, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["image"] = None if value.lower() == "none" else value.strip()
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome image updated."))
 
 
 @welcome.command(name="use_avatar_thumbnail", description="Toggle using the joining user's avatar as thumbnail.")
 @admin_only()
 async def welcome_use_avatar_thumbnail(ctx: commands.Context, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     lowered = value.lower()
     if lowered in ("true", "yes", "on", "1"):
         config["use_avatar_thumbnail"] = True
@@ -3399,14 +3428,14 @@ async def welcome_use_avatar_thumbnail(ctx: commands.Context, value: str):
         config["use_avatar_thumbnail"] = False
     else:
         return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Value must be true or false."))
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome avatar thumbnail setting updated."))
 
 
 @welcome.command(name="use_avatar_image", description="Toggle using the joining user's avatar as image.")
 @admin_only()
 async def welcome_use_avatar_image(ctx: commands.Context, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     lowered = value.lower()
     if lowered in ("true", "yes", "on", "1"):
         config["use_avatar_image"] = True
@@ -3414,14 +3443,14 @@ async def welcome_use_avatar_image(ctx: commands.Context, value: str):
         config["use_avatar_image"] = False
     else:
         return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Value must be true or false."))
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome avatar image setting updated."))
 
 
 @welcome.command(name="timestamp", description="Toggle the welcome embed timestamp.")
 @admin_only()
 async def welcome_timestamp(ctx: commands.Context, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     lowered = value.lower()
     if lowered in ("true", "yes", "on", "1"):
         config["timestamp"] = True
@@ -3429,27 +3458,27 @@ async def welcome_timestamp(ctx: commands.Context, value: str):
         config["timestamp"] = False
     else:
         return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Value must be true or false."))
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome timestamp setting updated."))
 
 
 @welcome.command(name="enable", description="Enable welcome messages.")
 @admin_only()
 async def welcome_enable(ctx: commands.Context):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     if not config.get("channel_id"):
         return await ctx.send(embed=themed_embed("FusionCollab Welcome", "Set a welcome channel first using `.welcome channel #channel`."))
     config["enabled"] = True
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome messages enabled."))
 
 
 @welcome.command(name="disable", description="Disable welcome messages.")
 @admin_only()
 async def welcome_disable(ctx: commands.Context):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     config["enabled"] = False
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome messages disabled."))
 
 
@@ -3459,10 +3488,10 @@ async def welcome_test(ctx: commands.Context):
     if not isinstance(ctx.author, discord.Member):
         return await ctx.send(embed=themed_embed("FusionCollab Welcome", "This command only works in a server."))
 
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     content = format_welcome_text(config.get("content"), ctx.author)
     embed = build_welcome_embed(ctx.author)
-    view = build_welcome_view()
+    view = build_welcome_view(ctx.guild.id)
 
     await ctx.send(
         content=content,
@@ -3473,7 +3502,7 @@ async def welcome_test(ctx: commands.Context):
 @welcome.command(name="buttonadd", description="Add a welcome link button.")
 @admin_only()
 async def welcome_buttonadd(ctx: commands.Context, key: str, url: str, *, label: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     buttons = config.setdefault("buttons", [])
 
     key = key.lower().strip()
@@ -3486,21 +3515,21 @@ async def welcome_buttonadd(ctx: commands.Context, key: str, url: str, *, label:
         "url": url.strip(),
         "emoji": None
     })
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` added."))
 
 
 @welcome.command(name="buttonemoji", description="Set a welcome button emoji.")
 @admin_only()
 async def welcome_buttonemoji(ctx: commands.Context, key: str, *, value: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     buttons = config.setdefault("buttons", [])
     key = key.lower().strip()
 
     for button in buttons:
         if str(button.get("key", "")).lower() == key:
             button["emoji"] = None if value.lower() == "none" else value.strip()
-            set_welcome_config(config)
+            set_welcome_config(config, ctx.guild.id)
             return await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` emoji updated."))
 
     await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` was not found."))
@@ -3509,7 +3538,7 @@ async def welcome_buttonemoji(ctx: commands.Context, key: str, *, value: str):
 @welcome.command(name="buttondelete", description="Delete a welcome button.")
 @admin_only()
 async def welcome_buttondelete(ctx: commands.Context, key: str):
-    config = get_welcome_config()
+    config = get_welcome_config(ctx.guild.id)
     buttons = config.setdefault("buttons", [])
     key = key.lower().strip()
 
@@ -3518,7 +3547,7 @@ async def welcome_buttondelete(ctx: commands.Context, key: str):
         return await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` was not found."))
 
     config["buttons"] = new_buttons
-    set_welcome_config(config)
+    set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` deleted."))
 
 
@@ -3726,7 +3755,7 @@ def build_mention_prefix_embed(member: discord.Member, prefix: str) -> discord.E
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    config = get_welcome_config()
+    config = get_welcome_config(member.guild.id)
     if not config.get("enabled"):
         return
 
@@ -3740,7 +3769,7 @@ async def on_member_join(member: discord.Member):
 
     content = format_welcome_text(config.get("content"), member)
     embed = build_welcome_embed(member)
-    view = build_welcome_view()
+    view = build_welcome_view(member.guild.id)
 
     embed_to_send = None
     if (
