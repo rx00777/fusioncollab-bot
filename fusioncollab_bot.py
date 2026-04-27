@@ -3493,11 +3493,27 @@ async def welcome_test(ctx: commands.Context):
     embed = build_welcome_embed(ctx.author)
     view = build_welcome_view(ctx.guild.id)
 
+    embed_to_send = None
+    if (
+        embed.title
+        or embed.description
+        or embed.color
+        or embed.footer
+        or embed.image
+        or embed.thumbnail
+        or embed.timestamp
+    ):
+        embed_to_send = embed
+
+    if content is None and embed_to_send is None and view is None:
+        return await ctx.send(embed=themed_embed("FusionCollab Welcome", "This server has no welcome content configured yet."))
+
     await ctx.send(
         content=content,
-        embed=embed if (embed.title or embed.description or embed.color or embed.footer or embed.image or embed.thumbnail or embed.timestamp) else None,
+        embed=embed_to_send,
         view=view
     )
+
 
 @welcome.command(name="buttonadd", description="Add a welcome link button.")
 @admin_only()
