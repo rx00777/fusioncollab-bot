@@ -246,7 +246,7 @@ def delete_panel(panel_key: str, guild_id: Optional[int] = None):
 
 def get_or_migrate_panel(panel_key: str, guild_id: int) -> Optional[dict]:
     panel_key = panel_key.lower()
-    store = get_guild_store(guild_id)
+    return get_guild_store(guild_id)["panels"].get(panel_key)
 
     panel = store["panels"].get(panel_key)
     if panel is not None:
@@ -2408,13 +2408,15 @@ class PanelOpenView(discord.ui.View):
 
     def make_callback(self, panel_key: str):
         async def callback(interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)
+
             panel = get_panel(panel_key, interaction.guild.id)
             if not panel:
-                return await interaction.response.send_message("Panel not found.", ephemeral=True)
+                return await interaction.followup.send("Panel not found.", ephemeral=True)
 
             panel = panel_with_defaults(panel)
             if not panel.get("types"):
-                return await interaction.response.send_message("This panel has no ticket types yet.", ephemeral=True)
+                return await interaction.followup.send("This panel has no ticket types yet.", ephemeral=True)
 
             embed = discord.Embed(
                 title=panel.get("title", "FusionCollab"),
@@ -2426,7 +2428,7 @@ class PanelOpenView(discord.ui.View):
             if panel.get("thumbnail"):
                 embed.set_thumbnail(url=panel["thumbnail"])
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embed,
                 view=TicketTypeSelectView(panel_key, panel),
                 ephemeral=True
@@ -3636,7 +3638,21 @@ async def welcome_buttondelete(ctx: commands.Context, key: str):
     set_welcome_config(config, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome button `{key}` deleted."))
 
+@bot.hybrid_command(name="panelimportlegacy", description="Import an old global ticket panel into this server.")
+@admin_only()
+async def panelimportlegacy(ctx: commands.Context, key: str):
+    key = key.lower()
+    legacy_panel = data["panels"].get(key)
+    if not legacy_panel:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Legacy panel `{key}` was not found."))
 
+    store = get_guild_store(ctx.guild.id)
+    if key in store["panels"]:
+        return await ctx.send(embed=themed_embed("FusionCollab", f"Panel `{key}` already exists in this server."))
+
+    store["panels"][key] = deep_copy(legacy_panel)
+    save_data()
+    await ctx.send(embed=themed_embed("FusionCollab", f"Imported legacy panel `{key}` into this server."))
 
 
 
