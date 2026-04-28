@@ -212,17 +212,36 @@ def parse_button_emoji(value):
         return value
 
 
-def get_panel(panel_key: str) -> Optional[dict]:
-    return data["panels"].get(panel_key.lower())
+def get_panel(panel_key: str, guild_id: Optional[int] = None) -> Optional[dict]:
+    panel_key = panel_key.lower()
+
+    if guild_id is not None:
+        guild_panel = get_guild_store(guild_id)["panels"].get(panel_key)
+        if guild_panel is not None:
+            return guild_panel
+
+    return data["panels"].get(panel_key)
 
 
-def set_panel(panel_key: str, panel: dict):
-    data["panels"][panel_key.lower()] = panel
+def set_panel(panel_key: str, panel: dict, guild_id: Optional[int] = None):
+    panel_key = panel_key.lower()
+
+    if guild_id is not None:
+        get_guild_store(guild_id)["panels"][panel_key] = panel
+    else:
+        data["panels"][panel_key] = panel
+
     save_data()
 
 
-def delete_panel(panel_key: str):
-    data["panels"].pop(panel_key.lower(), None)
+def delete_panel(panel_key: str, guild_id: Optional[int] = None):
+    panel_key = panel_key.lower()
+
+    if guild_id is not None:
+        get_guild_store(guild_id)["panels"].pop(panel_key, None)
+    else:
+        data["panels"].pop(panel_key, None)
+
     save_data()
 
 
@@ -319,7 +338,7 @@ def member_has_staff_access(member: discord.Member, panel_key: str, type_key: st
     if member.guild_permissions.administrator:
         return True
 
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, member.guild.id)
     if not panel:
         return False
 
@@ -400,7 +419,7 @@ async def create_transcript_file(channel: discord.TextChannel) -> discord.File:
 
 
 async def send_type_log(guild: discord.Guild, panel_key: str, type_key: str, content: str, file: Optional[discord.File] = None):
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, guild.id)
     if not panel:
         return
 
@@ -444,7 +463,7 @@ async def safe_send(ctx_or_interaction, content=None, embed=None, ephemeral=Fals
 
 
 async def open_ticket_for_member(guild: discord.Guild, member: discord.Member, panel_key: str, type_key: str):
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, guild.id)
     if not panel:
         return None, "Panel not found."
 
@@ -491,6 +510,7 @@ async def open_ticket_for_member(guild: discord.Guild, member: discord.Member, p
 
     set_ticket_meta(channel.id, {
         "owner_id": member.id,
+        "guild_id": guild.id,
         "panel_key": panel_key.lower(),
         "type_key": type_key.lower(),
         "created_at": now_utc().isoformat()
@@ -2352,7 +2372,7 @@ class PanelOpenView(discord.ui.View):
 
     def make_callback(self, panel_key: str):
         async def callback(interaction: discord.Interaction):
-            panel = get_panel(panel_key)
+            panel = get_panel(panel_key, interaction.guild.id)
             if not panel:
                 return await interaction.response.send_message("Panel not found.", ephemeral=True)
 
@@ -2587,7 +2607,7 @@ class ConfirmCloseView(discord.ui.View):
         if interaction.user.id != owner_id and not member_has_staff_access(interaction.user, panel_key, type_key):
             return await interaction.response.send_message("You cannot close this ticket.", ephemeral=True)
 
-        panel = get_panel(panel_key)
+        panel = get_panel(panel_key, interaction.guild.id)
         ticket_type = ticket_type_with_defaults((panel or {}).get("types", {}).get(type_key, {}))
         delay = int(ticket_type.get("close_delay", 3))
 
@@ -2774,6 +2794,13 @@ async def on_ready():
         except Exception as e:
             print(f"Failed to register panel view for {panel_key}: {e}")
 
+    for guild_id, store in data.get("guilds", {}).items():
+        for panel_key, panel in store.get("panels", {}).items():
+            try:
+                bot.add_view(PanelOpenView(panel_key, panel))
+            except Exception as e:
+                print(f"Failed to register guild panel view for {guild_id}/{panel_key}: {e}")
+
     for panel_key, panel in data.get("embed_panels", {}).items():
         try:
             bot.add_view(EmbedPanelButtonView(panel_key, panel))
@@ -2856,12 +2883,12 @@ async def setprefix(ctx: commands.Context, prefix: str):
 @admin_only()
 async def panelcreate(ctx: commands.Context, key: str):
     key = key.lower()
-    if get_panel(key):
+    if get_panel(key, ctx.guild.id):
         return await ctx.send("That panel already exists.")
 
     panel = deep_copy(DEFAULT_PANEL)
     panel["types"] = {}
-    set_panel(key, panel)
+    set_panel(key, panel, ctx.guild.id)
 
     bot.add_view(PanelOpenView(key, panel))
     await ctx.send(f"Panel `{key}` created.")
@@ -2871,10 +2898,10 @@ async def panelcreate(ctx: commands.Context, key: str):
 @admin_only()
 async def paneldelete(ctx: commands.Context, key: str):
     key = key.lower()
-    if not get_panel(key):
+    if not get_panel(key, ctx.guild.id):
         return await ctx.send("Panel not found.")
 
-    delete_panel(key)
+    delete_panel(key, ctx.guild.id)
     await ctx.send(f"Deleted panel `{key}`.")
 
 
@@ -2882,7 +2909,7 @@ async def paneldelete(ctx: commands.Context, key: str):
 @admin_only()
 async def panelsend(ctx: commands.Context, key: str, channel: discord.TextChannel):
     key = key.lower()
-    panel = get_panel(key)
+    panel = get_panel(key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2897,7 +2924,7 @@ async def panelset(ctx: commands.Context, key: str, field: str, *, value: str):
     key = key.lower()
     field = field.lower()
 
-    panel = get_panel(key)
+    panel = get_panel(key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2922,7 +2949,7 @@ async def panelset(ctx: commands.Context, key: str, field: str, *, value: str):
     except ValueError:
         return await ctx.send("Invalid value for that field.")
 
-    set_panel(key, panel)
+    set_panel(key, panel, ctx.guild.id)
     bot.add_view(PanelOpenView(key, panel))
     await ctx.send(f"Updated panel `{key}` field `{field}`.")
 
@@ -2937,7 +2964,7 @@ async def typeadd(ctx: commands.Context, panel_key: str, type_key: str):
     panel_key = panel_key.lower()
     type_key = type_key.lower()
 
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2949,7 +2976,7 @@ async def typeadd(ctx: commands.Context, panel_key: str, type_key: str):
     new_type["label"] = type_key.title()
     panel["types"][type_key] = new_type
 
-    set_panel(panel_key, panel)
+    set_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(PanelOpenView(panel_key, panel))
     await ctx.send(f"Added ticket type `{type_key}` to panel `{panel_key}`.")
 
@@ -2960,7 +2987,7 @@ async def typedelete(ctx: commands.Context, panel_key: str, type_key: str):
     panel_key = panel_key.lower()
     type_key = type_key.lower()
 
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2969,7 +2996,7 @@ async def typedelete(ctx: commands.Context, panel_key: str, type_key: str):
         return await ctx.send("Ticket type not found.")
 
     del panel["types"][type_key]
-    set_panel(panel_key, panel)
+    set_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(PanelOpenView(panel_key, panel))
     await ctx.send(f"Deleted ticket type `{type_key}` from panel `{panel_key}`.")
 
@@ -2981,7 +3008,7 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
     type_key = type_key.lower()
     field = field.lower()
 
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3045,7 +3072,7 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
         return await ctx.send("Invalid value for that field.")
 
     panel["types"][type_key] = ticket_type
-    set_panel(panel_key, panel)
+    set_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(PanelOpenView(panel_key, panel))
     await ctx.send(f"Updated type `{type_key}` field `{field}` in panel `{panel_key}`.")
 
@@ -3054,7 +3081,7 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
 @admin_only()
 async def typelist(ctx: commands.Context, panel_key: str):
     panel_key = panel_key.lower()
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3080,7 +3107,7 @@ async def typelist(ctx: commands.Context, panel_key: str):
 @admin_only()
 async def setupcheck(ctx: commands.Context, panel_key: str, type_key: Optional[str] = None):
     panel_key = panel_key.lower()
-    panel = get_panel(panel_key)
+    panel = get_panel(panel_key, ctx.guild.id)
 
     if not panel:
         embed = discord.Embed(
