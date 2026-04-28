@@ -1094,17 +1094,36 @@ DEFAULT_WELCOME = {
 }
 
 
-def get_embed_panel(panel_key: str) -> Optional[dict]:
-    return data.setdefault("embed_panels", {}).get(panel_key.lower())
+def get_embed_panel(panel_key: str, guild_id: Optional[int] = None) -> Optional[dict]:
+    panel_key = panel_key.lower()
+
+    if guild_id is not None:
+        guild_panel = get_guild_store(guild_id)["embed_panels"].get(panel_key)
+        if guild_panel is not None:
+            return guild_panel
+
+    return data.setdefault("embed_panels", {}).get(panel_key)
 
 
-def set_embed_panel(panel_key: str, panel: dict):
-    data.setdefault("embed_panels", {})[panel_key.lower()] = panel
+def set_embed_panel(panel_key: str, panel: dict, guild_id: Optional[int] = None):
+    panel_key = panel_key.lower()
+
+    if guild_id is not None:
+        get_guild_store(guild_id)["embed_panels"][panel_key] = panel
+    else:
+        data.setdefault("embed_panels", {})[panel_key] = panel
+
     save_data()
 
 
-def delete_embed_panel(panel_key: str):
-    data.setdefault("embed_panels", {}).pop(panel_key.lower(), None)
+def delete_embed_panel(panel_key: str, guild_id: Optional[int] = None):
+    panel_key = panel_key.lower()
+
+    if guild_id is not None:
+        get_guild_store(guild_id)["embed_panels"].pop(panel_key, None)
+    else:
+        data.setdefault("embed_panels", {}).pop(panel_key, None)
+
     save_data()
 
 
@@ -2807,6 +2826,13 @@ async def on_ready():
         except Exception as e:
             print(f"Failed to register embed panel view for {panel_key}: {e}")
 
+    for guild_id, store in data.get("guilds", {}).items():
+        for panel_key, panel in store.get("embed_panels", {}).items():
+            try:
+                bot.add_view(EmbedPanelButtonView(panel_key, panel))
+            except Exception as e:
+                print(f"Failed to register guild embed panel view for {guild_id}/{panel_key}: {e}")
+
     try:
 
         synced = await bot.tree.sync()
@@ -2909,7 +2935,7 @@ async def paneldelete(ctx: commands.Context, key: str):
 @admin_only()
 async def panelsend(ctx: commands.Context, key: str, channel: discord.TextChannel):
     key = key.lower()
-    panel = get_panel(key, ctx.guild.id)
+    panel = get_guild_store(ctx.guild.id)["panels"].get(key)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2924,7 +2950,7 @@ async def panelset(ctx: commands.Context, key: str, field: str, *, value: str):
     key = key.lower()
     field = field.lower()
 
-    panel = get_panel(key, ctx.guild.id)
+    panel = get_guild_store(ctx.guild.id)["panels"].get(key)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2964,7 +2990,7 @@ async def typeadd(ctx: commands.Context, panel_key: str, type_key: str):
     panel_key = panel_key.lower()
     type_key = type_key.lower()
 
-    panel = get_panel(panel_key, ctx.guild.id)
+    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2987,7 +3013,7 @@ async def typedelete(ctx: commands.Context, panel_key: str, type_key: str):
     panel_key = panel_key.lower()
     type_key = type_key.lower()
 
-    panel = get_panel(panel_key, ctx.guild.id)
+    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3008,7 +3034,7 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
     type_key = type_key.lower()
     field = field.lower()
 
-    panel = get_panel(panel_key, ctx.guild.id)
+    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3081,7 +3107,7 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
 @admin_only()
 async def typelist(ctx: commands.Context, panel_key: str):
     panel_key = panel_key.lower()
-    panel = get_panel(panel_key, ctx.guild.id)
+    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3107,7 +3133,7 @@ async def typelist(ctx: commands.Context, panel_key: str):
 @admin_only()
 async def setupcheck(ctx: commands.Context, panel_key: str, type_key: Optional[str] = None):
     panel_key = panel_key.lower()
-    panel = get_panel(panel_key, ctx.guild.id)
+    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
 
     if not panel:
         embed = discord.Embed(
@@ -3170,12 +3196,12 @@ async def ticketstats(ctx: commands.Context):
 @admin_only()
 async def embedpanelcreate(ctx: commands.Context, key: str):
     key = key.lower()
-    if get_embed_panel(key):
+    if get_embed_panel(key, ctx.guild.id):
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` already exists."))
 
     panel = deep_copy(DEFAULT_EMBED_PANEL)
     panel["buttons"] = {}
-    set_embed_panel(key, panel)
+    set_embed_panel(key, panel, ctx.guild.id)
 
     bot.add_view(EmbedPanelButtonView(key, panel))
     await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` created."))
@@ -3185,10 +3211,10 @@ async def embedpanelcreate(ctx: commands.Context, key: str):
 @admin_only()
 async def embedpaneldelete(ctx: commands.Context, key: str):
     key = key.lower()
-    if not get_embed_panel(key):
+    if not get_embed_panel(key, ctx.guild.id):
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` was not found."))
 
-    delete_embed_panel(key)
+    delete_embed_panel(key, ctx.guild.id)
     await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` deleted."))
 
 
@@ -3198,7 +3224,7 @@ async def embedbuttonadd(ctx: commands.Context, panel_key: str, button_key: str)
     panel_key = panel_key.lower()
     button_key = button_key.lower()
 
-    panel = get_embed_panel(panel_key)
+    panel = get_guild_store(ctx.guild.id)["embed_panels"].get(panel_key)
     if not panel:
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
 
@@ -3210,7 +3236,7 @@ async def embedbuttonadd(ctx: commands.Context, panel_key: str, button_key: str)
     new_button["label"] = button_key.title()
     panel["buttons"][button_key] = new_button
 
-    set_embed_panel(panel_key, panel)
+    set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
     await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` added to embed panel `{panel_key}`."))
 
@@ -3221,7 +3247,7 @@ async def embedbuttondelete(ctx: commands.Context, panel_key: str, button_key: s
     panel_key = panel_key.lower()
     button_key = button_key.lower()
 
-    panel = get_embed_panel(panel_key)
+    panel = get_guild_store(ctx.guild.id)["embed_panels"].get(panel_key)
     if not panel:
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
 
@@ -3230,7 +3256,7 @@ async def embedbuttondelete(ctx: commands.Context, panel_key: str, button_key: s
         return await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` was not found in `{panel_key}`."))
 
     del panel["buttons"][button_key]
-    set_embed_panel(panel_key, panel)
+    set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
     await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` deleted from `{panel_key}`."))
 
@@ -3241,7 +3267,7 @@ async def embedpanelset(ctx: commands.Context, panel_key: str, field: str, *, va
     panel_key = panel_key.lower()
     field = field.lower()
 
-    panel = get_embed_panel(panel_key)
+    panel = get_guild_store(ctx.guild.id)["embed_panels"].get(panel_key)
     if not panel:
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
 
@@ -3269,7 +3295,7 @@ async def embedpanelset(ctx: commands.Context, panel_key: str, field: str, *, va
         return await ctx.send(embed=themed_embed("FusionCollab", "Invalid value for that field."))
 
 
-    set_embed_panel(panel_key, panel)
+    set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
     await ctx.send(embed=themed_embed("FusionCollab", f"Updated `{field}` in embed panel `{panel_key}`."))
 
@@ -3281,7 +3307,7 @@ async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str,
     button_key = button_key.lower()
     field = field.lower()
 
-    panel = get_embed_panel(panel_key)
+    panel = get_guild_store(ctx.guild.id)["embed_panels"].get(panel_key)
     if not panel:
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
 
@@ -3325,7 +3351,7 @@ async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str,
 
 
     panel["buttons"][button_key] = button
-    set_embed_panel(panel_key, panel)
+    set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
     await ctx.send(embed=themed_embed("FusionCollab", f"Updated `{field}` for button `{button_key}` in `{panel_key}`."))
 
@@ -3334,7 +3360,7 @@ async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str,
 @admin_only()
 async def embedpanelsend(ctx: commands.Context, panel_key: str, channel: discord.TextChannel):
     panel_key = panel_key.lower()
-    panel = get_embed_panel(panel_key)
+    panel = get_guild_store(ctx.guild.id)["embed_panels"].get(panel_key)
     if not panel:
         return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
 
