@@ -244,6 +244,23 @@ def delete_panel(panel_key: str, guild_id: Optional[int] = None):
 
     save_data()
 
+def get_or_migrate_panel(panel_key: str, guild_id: int) -> Optional[dict]:
+    panel_key = panel_key.lower()
+    store = get_guild_store(guild_id)
+
+    panel = store["panels"].get(panel_key)
+    if panel is not None:
+        return panel
+
+    legacy_panel = data["panels"].get(panel_key)
+    if legacy_panel is None:
+        return None
+
+    panel = deep_copy(legacy_panel)
+    store["panels"][panel_key] = panel
+    save_data()
+    return panel
+
 
 def panel_with_defaults(panel: dict) -> dict:
     merged = deep_copy(DEFAULT_PANEL)
@@ -2935,7 +2952,7 @@ async def paneldelete(ctx: commands.Context, key: str):
 @admin_only()
 async def panelsend(ctx: commands.Context, key: str, channel: discord.TextChannel):
     key = key.lower()
-    panel = get_guild_store(ctx.guild.id)["panels"].get(key)
+    panel = get_or_migrate_panel(key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2950,7 +2967,7 @@ async def panelset(ctx: commands.Context, key: str, field: str, *, value: str):
     key = key.lower()
     field = field.lower()
 
-    panel = get_guild_store(ctx.guild.id)["panels"].get(key)
+    panel = get_or_migrate_panel(key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -2990,7 +3007,7 @@ async def typeadd(ctx: commands.Context, panel_key: str, type_key: str):
     panel_key = panel_key.lower()
     type_key = type_key.lower()
 
-    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
+    panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3013,7 +3030,7 @@ async def typedelete(ctx: commands.Context, panel_key: str, type_key: str):
     panel_key = panel_key.lower()
     type_key = type_key.lower()
 
-    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
+    panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3034,7 +3051,7 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
     type_key = type_key.lower()
     field = field.lower()
 
-    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
+    panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3107,7 +3124,7 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
 @admin_only()
 async def typelist(ctx: commands.Context, panel_key: str):
     panel_key = panel_key.lower()
-    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
+    panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
         return await ctx.send("Panel not found.")
 
@@ -3133,7 +3150,7 @@ async def typelist(ctx: commands.Context, panel_key: str):
 @admin_only()
 async def setupcheck(ctx: commands.Context, panel_key: str, type_key: Optional[str] = None):
     panel_key = panel_key.lower()
-    panel = get_guild_store(ctx.guild.id)["panels"].get(panel_key)
+    panel = get_or_migrate_panel(panel_key, ctx.guild.id)
 
     if not panel:
         embed = discord.Embed(
