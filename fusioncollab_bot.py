@@ -22,6 +22,11 @@ DATA_FILE = Path("/data/fusioncollab_v2_data.json") if Path("/data").exists() el
 HELP_COLOR = 0x18191C
 DEFAULT_EMBED_COLOR = 0x2B2D31
 
+STATUS_INFO_COLOR = 0xF2F3F5
+STATUS_SUCCESS_COLOR = 0x57F287
+STATUS_WARNING_COLOR = 0xF0B232
+STATUS_ERROR_COLOR = 0xF05D6A
+
 DEFAULT_DATA = {
     "prefix": ".",
     "panels": {},
@@ -2568,6 +2573,14 @@ class TicketControlsView(discord.ui.View):
         file = await create_transcript_file(interaction.channel)
         await interaction.response.send_message(file=file, ephemeral=True)
 
+def status_embed(description: str, color: int, title: Optional[str] = None) -> discord.Embed:
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=color
+    )
+    return embed
+
 def themed_embed(title: str, description: str) -> discord.Embed:
     embed = discord.Embed(
         title=title,
@@ -2914,10 +2927,10 @@ async def ping(ctx: commands.Context):
 @admin_only()
 async def setprefix(ctx: commands.Context, prefix: str):
     if len(prefix) > 10:
-        return await ctx.send("Prefix is too long.")
+        return await ctx.send(embed=status_embed("⚠️ Prefix is too long.", STATUS_WARNING_COLOR))
     data["prefix"] = prefix
     save_data()
-    await ctx.send(f"Prefix updated to `{prefix}`")
+    await ctx.send(embed=status_embed(f"Prefix updated to `{prefix}`", STATUS_SUCCESS_COLOR))
 
 
 # =========================================================
@@ -2929,14 +2942,14 @@ async def setprefix(ctx: commands.Context, prefix: str):
 async def panelcreate(ctx: commands.Context, key: str):
     key = key.lower()
     if get_panel(key, ctx.guild.id):
-        return await ctx.send("That panel already exists.")
+        return await ctx.send(embed=status_embed("That panel already exists.", STATUS_WARNING_COLOR))
 
     panel = deep_copy(DEFAULT_PANEL)
     panel["types"] = {}
     set_panel(key, panel, ctx.guild.id)
 
     bot.add_view(PanelOpenView(key, panel))
-    await ctx.send(f"Panel `{key}` created.")
+    await ctx.send(embed=status_embed(f"Panel `{key}` created.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="paneldelete", description="Delete a main panel.")
@@ -2944,7 +2957,7 @@ async def panelcreate(ctx: commands.Context, key: str):
 async def paneldelete(ctx: commands.Context, key: str):
     key = key.lower()
     if not get_panel(key, ctx.guild.id):
-        return await ctx.send("Panel not found.")
+        return await ctx.send(embed=status_embed("❌ **Panel** not found.", STATUS_ERROR_COLOR))
 
     delete_panel(key, ctx.guild.id)
     await ctx.send(f"Deleted panel `{key}`.")
@@ -2956,7 +2969,7 @@ async def panelsend(ctx: commands.Context, key: str, channel: discord.TextChanne
     key = key.lower()
     panel = get_or_migrate_panel(key, ctx.guild.id)
     if not panel:
-        return await ctx.send("Panel not found.")
+        return await ctx.send(embed=status_embed("❌ **Panel** not found.", STATUS_ERROR_COLOR))
 
     view = PanelOpenView(key, panel)
     await channel.send(embed=panel_embed(panel), view=view)
@@ -2971,7 +2984,7 @@ async def panelset(ctx: commands.Context, key: str, field: str, *, value: str):
 
     panel = get_or_migrate_panel(key, ctx.guild.id)
     if not panel:
-        return await ctx.send("Panel not found.")
+        return await ctx.send(embed=status_embed("❌ **Panel** not found.", STATUS_ERROR_COLOR))
 
     panel = panel_with_defaults(panel)
     value = value.strip()
@@ -2985,14 +2998,14 @@ async def panelset(ctx: commands.Context, key: str, field: str, *, value: str):
             panel[field] = None if value.lower() == "none" else value
         elif field == "button_style":
             if value.lower() not in ("primary", "secondary", "success", "danger"):
-                return await ctx.send("button_style must be primary, secondary, success, or danger.")
+                return await ctx.send(embed=status_embed("⚠️ button_style must be `primary`, `secondary`, `success`, or `danger`.", STATUS_WARNING_COLOR))
             panel[field] = value.lower()
         elif field in ("title", "description", "button_label", "footer"):
             panel[field] = normalize_newlines(value)
         else:
-            return await ctx.send("Unknown panel field.")
+            return await ctx.send(embed=status_embed("Unknown panel field.", STATUS_WARNING_COLOR))
     except ValueError:
-        return await ctx.send("Invalid value for that field.")
+        return await ctx.send(embed=status_embed("Invalid value for that field.", STATUS_WARNING_COLOR))
 
     set_panel(key, panel, ctx.guild.id)
     bot.add_view(PanelOpenView(key, panel))
@@ -3011,11 +3024,11 @@ async def typeadd(ctx: commands.Context, panel_key: str, type_key: str):
 
     panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
-        return await ctx.send("Panel not found.")
+        return await ctx.send(embed=status_embed("❌ **Panel** not found.", STATUS_ERROR_COLOR))
 
     panel = panel_with_defaults(panel)
     if type_key in panel["types"]:
-        return await ctx.send("That ticket type already exists.")
+        return await ctx.send(embed=status_embed("⚠️ That ticket type already exists.", STATUS_WARNING_COLOR))
 
     new_type = deep_copy(DEFAULT_TYPE)
     new_type["label"] = type_key.title()
@@ -3034,11 +3047,11 @@ async def typedelete(ctx: commands.Context, panel_key: str, type_key: str):
 
     panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
-        return await ctx.send("Panel not found.")
+        return await ctx.send(embed=status_embed("❌ **Panel** not found.", STATUS_ERROR_COLOR))
 
     panel = panel_with_defaults(panel)
     if type_key not in panel["types"]:
-        return await ctx.send("Ticket type not found.")
+        return await ctx.send(embed=status_embed("Ticket type not found.", STATUS_WARNING_COLOR))
 
     del panel["types"][type_key]
     set_panel(panel_key, panel, ctx.guild.id)
@@ -3055,12 +3068,13 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
 
     panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
-        return await ctx.send("Panel not found.")
+        return await ctx.send(embed=status_embed("❌ **Panel** not found.", STATUS_ERROR_COLOR))
+
 
     panel = panel_with_defaults(panel)
     ticket_type = panel["types"].get(type_key)
     if not ticket_type:
-        return await ctx.send("Ticket type not found.")
+        return await ctx.send(embed=status_embed("Ticket type not found.", STATUS_WARNING_COLOR))
 
     ticket_type = ticket_type_with_defaults(ticket_type)
     value = value.strip()
@@ -3112,14 +3126,14 @@ async def typeset(ctx: commands.Context, panel_key: str, type_key: str, field: s
         elif field in ("label", "description", "ticket_prefix", "ticket_title", "ticket_message"):
             ticket_type[field] = normalize_newlines(value)
         else:
-            return await ctx.send("Unknown ticket type field.")
+            return await ctx.send(embed=status_embed("Unknown ticket type field.", STATUS_WARNING_COLOR))
     except ValueError:
-        return await ctx.send("Invalid value for that field.")
+        return await ctx.send(embed=status_embed("Invalid value for that field.", STATUS_WARNING_COLOR))
 
     panel["types"][type_key] = ticket_type
     set_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(PanelOpenView(panel_key, panel))
-    await ctx.send(f"Updated type `{type_key}` field `{field}` in panel `{panel_key}`.")
+    await ctx.send(embed=status_embed(f"Updated type `{type_key}` field `{field}` in panel `{panel_key}`.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="typelist", description="List ticket types in a panel.")
@@ -3128,11 +3142,11 @@ async def typelist(ctx: commands.Context, panel_key: str):
     panel_key = panel_key.lower()
     panel = get_or_migrate_panel(panel_key, ctx.guild.id)
     if not panel:
-        return await ctx.send("Panel not found.")
+        return await ctx.send(embed=status_embed("❌ **Panel** not found.", STATUS_ERROR_COLOR))
 
     panel = panel_with_defaults(panel)
     if not panel["types"]:
-        return await ctx.send("This panel has no ticket types.")
+        return await ctx.send(embed=status_embed("⚠️ This panel has no ticket types.", STATUS_WARNING_COLOR))
 
     lines = []
     for type_key, type_data in panel["types"].items():
@@ -3216,14 +3230,14 @@ async def ticketstats(ctx: commands.Context):
 async def embedpanelcreate(ctx: commands.Context, key: str):
     key = key.lower()
     if get_embed_panel(key, ctx.guild.id):
-        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` already exists."))
+        return await ctx.send(embed=status_embed(f"⚠️ Embed panel `{key}` already exists.", STATUS_WARNING_COLOR))
 
     panel = deep_copy(DEFAULT_EMBED_PANEL)
     panel["buttons"] = {}
     set_embed_panel(key, panel, ctx.guild.id)
 
     bot.add_view(EmbedPanelButtonView(key, panel))
-    await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` created."))
+    await ctx.send(embed=status_embed(f"Embed panel `{key}` created.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="embedpaneldelete", description="Delete an embed panel.")
@@ -3231,10 +3245,10 @@ async def embedpanelcreate(ctx: commands.Context, key: str):
 async def embedpaneldelete(ctx: commands.Context, key: str):
     key = key.lower()
     if not get_embed_panel(key, ctx.guild.id):
-        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` was not found."))
+        return await ctx.send(embed=status_embed(f"⚠️ Embed panel `{key}` was not found.", STATUS_WARNING_COLOR))
 
     delete_embed_panel(key, ctx.guild.id)
-    await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{key}` deleted."))
+    await ctx.send(embed=status_embed(f"Embed panel `{key}` deleted.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="embedbuttonadd", description="Add a button to an embed panel.")
@@ -3249,7 +3263,7 @@ async def embedbuttonadd(ctx: commands.Context, panel_key: str, button_key: str)
 
     panel = embed_panel_with_defaults(panel)
     if button_key in panel["buttons"]:
-        return await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` already exists in `{panel_key}`."))
+        return await ctx.send(embed=status_embed(f"⚠️ Button `{button_key}` already exists in `{panel_key}`.", STATUS_WARNING_COLOR))
 
     new_button = deep_copy(DEFAULT_EMBED_BUTTON)
     new_button["label"] = button_key.title()
@@ -3257,7 +3271,7 @@ async def embedbuttonadd(ctx: commands.Context, panel_key: str, button_key: str)
 
     set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
-    await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` added to embed panel `{panel_key}`."))
+    await ctx.send(embed=status_embed(f"Button `{button_key}` added to embed panel `{panel_key}`.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="embedbuttondelete", description="Delete a button from an embed panel.")
@@ -3272,12 +3286,12 @@ async def embedbuttondelete(ctx: commands.Context, panel_key: str, button_key: s
 
     panel = embed_panel_with_defaults(panel)
     if button_key not in panel["buttons"]:
-        return await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` was not found in `{panel_key}`."))
+        return await ctx.send(embed=status_embed(f"⚠️ Button `{button_key}` was not found in `{panel_key}`.", STATUS_WARNING_COLOR))
 
     del panel["buttons"][button_key]
     set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
-    await ctx.send(embed=themed_embed("FusionCollab", f"Button `{button_key}` deleted from `{panel_key}`."))
+    await ctx.send(embed=status_embed(f"Button `{button_key}` deleted from `{panel_key}`.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="embedpanelset", description="Edit an embed panel field.")
@@ -3309,14 +3323,14 @@ async def embedpanelset(ctx: commands.Context, panel_key: str, field: str, *, va
         elif field in ("title", "description", "footer", "text_above_image", "text_below_image", "cv2_layout"):
             panel[field] = None if value.lower() == "none" else normalize_newlines(value)
         else:
-            return await ctx.send(embed=themed_embed("FusionCollab", "Unknown embed panel field."))
+            return await ctx.send(embed=status_embed("⚠️ Unknown embed panel field.", STATUS_WARNING_COLOR))
     except ValueError:
-        return await ctx.send(embed=themed_embed("FusionCollab", "Invalid value for that field."))
+        return await ctx.send(embed=status_embed("⚠️ Invalid value for that field.", STATUS_WARNING_COLOR))
 
 
     set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
-    await ctx.send(embed=themed_embed("FusionCollab", f"Updated `{field}` in embed panel `{panel_key}`."))
+    await ctx.send(embed=status_embed(f"Updated `{field}` in embed panel `{panel_key}`.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="embedbuttonset", description="Edit an embed panel button field.")
@@ -3345,11 +3359,11 @@ async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str,
             button[field] = None if value.lower() == "none" else value
         elif field in ("style",):
             if value.lower() not in ("primary", "secondary", "success", "danger"):
-                return await ctx.send(embed=themed_embed("FusionCollab", "Style must be primary, secondary, success, or danger."))
+                return await ctx.send(embed=status_embed("⚠️ Style must be `primary`, `secondary`, `success`, or `danger`.", STATUS_WARNING_COLOR))
             button[field] = value.lower()
         elif field in ("type",):
             if value.lower() not in ("popup", "link"):
-                return await ctx.send(embed=themed_embed("FusionCollab", "Type must be popup or link."))
+                return await ctx.send(embed=status_embed("⚠️ Type must be `popup` or `link`.", STATUS_WARNING_COLOR))
             button[field] = value.lower()
         elif field in ("url", "popup_thumbnail", "popup_image"):
             button[field] = None if value.lower() == "none" else value
@@ -3364,15 +3378,15 @@ async def embedbuttonset(ctx: commands.Context, panel_key: str, button_key: str,
         elif field in ("label", "popup_title", "popup_description", "popup_footer", "popup_cv2_layout"):
             button[field] = None if value.lower() == "none" else normalize_newlines(value)
         else:
-            return await ctx.send(embed=themed_embed("FusionCollab", "Unknown embed button field."))
+            return await ctx.send(embed=status_embed("⚠️ Unknown embed button field.", STATUS_WARNING_COLOR))
     except ValueError:
-        return await ctx.send(embed=themed_embed("FusionCollab", "Invalid value for that field."))
+        return await ctx.send(embed=status_embed("⚠️ Invalid value for that field.", STATUS_WARNING_COLOR))
 
 
     panel["buttons"][button_key] = button
     set_embed_panel(panel_key, panel, ctx.guild.id)
     bot.add_view(EmbedPanelButtonView(panel_key, panel))
-    await ctx.send(embed=themed_embed("FusionCollab", f"Updated `{field}` for button `{button_key}` in `{panel_key}`."))
+    await ctx.send(embed=status_embed(f"Updated `{field}` for button `{button_key}` in `{panel_key}`.", STATUS_SUCCESS_COLOR))
 
 
 @bot.hybrid_command(name="embedpanelsend", description="Send an embed panel into a channel.")
@@ -3381,8 +3395,7 @@ async def embedpanelsend(ctx: commands.Context, panel_key: str, channel: discord
     panel_key = panel_key.lower()
     panel = get_guild_store(ctx.guild.id)["embed_panels"].get(panel_key)
     if not panel:
-        return await ctx.send(embed=themed_embed("FusionCollab", f"Embed panel `{panel_key}` was not found."))
-
+        return await ctx.send(embed=status_embed(f"❌ **Embed panel** `{panel_key}` was not found.", STATUS_ERROR_COLOR))
     panel = embed_panel_with_defaults(panel)
 
     if panel.get("use_components_v2"):
@@ -3398,7 +3411,7 @@ async def embedpanelsend(ctx: commands.Context, panel_key: str, channel: discord
         view = EmbedPanelButtonView(panel_key, panel)
         await channel.send(embed=build_embed_panel_embed(panel), view=view)
 
-    await ctx.send(embed=themed_embed("FusionCollab", f"Sent embed panel `{panel_key}` in {channel.mention}."))
+    await ctx.send(embed=status_embed(f"Sent embed panel `{panel_key}` in {channel.mention}.", STATUS_SUCCESS_COLOR))
 
 @bot.hybrid_group(name="welcome", description="Manage the server welcome message.")
 @admin_only()
@@ -3420,8 +3433,7 @@ async def welcome_channel(ctx: commands.Context, channel: discord.TextChannel):
     config = get_welcome_config(ctx.guild.id)
     config["channel_id"] = channel.id
     set_welcome_config(config, ctx.guild.id)
-    await ctx.send(embed=themed_embed("FusionCollab Welcome", f"Welcome channel set to {channel.mention}."))
-
+    await ctx.send(embed=status_embed(f"Welcome channel set to {channel.mention}.", STATUS_SUCCESS_COLOR))
 
 @welcome.command(name="content", description="Set the plain welcome message content.")
 @admin_only()
@@ -3429,7 +3441,7 @@ async def welcome_content(ctx: commands.Context, *, value: str):
     config = get_welcome_config(ctx.guild.id)
     config["content"] = None if value.lower() == "none" else normalize_newlines(value)
     set_welcome_config(config, ctx.guild.id)
-    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome content updated."))
+    await ctx.send(embed=status_embed("Welcome content updated.", STATUS_SUCCESS_COLOR))
 
 
 @welcome.command(name="title", description="Set the welcome embed title.")
@@ -3438,8 +3450,7 @@ async def welcome_title(ctx: commands.Context, *, value: str):
     config = get_welcome_config(ctx.guild.id)
     config["title"] = None if value.lower() == "none" else normalize_newlines(value)
     set_welcome_config(config, ctx.guild.id)
-    await ctx.send(embed=themed_embed("FusionCollab Welcome", "Welcome title updated."))
-
+    await ctx.send(embed=status_embed("Welcome title updated.", STATUS_SUCCESS_COLOR))
 
 @welcome.command(name="description", description="Set the welcome embed description.")
 @admin_only()
@@ -3967,7 +3978,19 @@ async def on_command_error(ctx: commands.Context, error):
         return
 
     if isinstance(error, commands.CheckFailure):
-        return await ctx.send(str(error))
+        user_text = ctx.author.mention if isinstance(ctx.author, discord.Member) else str(ctx.author)
+        command_name = ctx.command.qualified_name if ctx.command else ""
+
+        if command_name.startswith(("embedpanel", "embedbutton")):
+            message = f"⚠️ {user_text}: You don't have permission to configure embed panels."
+        elif command_name.startswith(("panel", "type", "setupcheck", "ticketstats")):
+            message = f"⚠️ {user_text}: You don't have permission to configure ticket panels."
+        else:
+            reason = str(error).replace(" permission required.", "").strip()
+            message = f"⚠️ {user_text}: You're **missing** permission: `{reason.lower()}`"
+
+        embed = status_embed(message, STATUS_WARNING_COLOR)
+        return await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     if isinstance(error, commands.MissingRequiredArgument):
         if is_admin_member(ctx.author):
@@ -3984,25 +4007,43 @@ async def on_command_error(ctx: commands.Context, error):
                     embed.set_thumbnail(url=HELP_THUMBNAIL)
                 embed.set_footer(text="FusionCollab • Admin Guidance")
                 return await ctx.send(embed=embed)
-        return await ctx.send("Missing required argument.")
+        embed = status_embed(
+            f"⚠️ {ctx.author.mention}: Missing required argument.",
+            STATUS_WARNING_COLOR
+        )
+        return await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     if isinstance(error, commands.BadArgument):
-        return await ctx.send("Invalid argument.")
+        embed = status_embed(
+            f"⚠️ {ctx.author.mention}: Invalid argument.",
+            STATUS_WARNING_COLOR
+        )
+        return await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     if isinstance(error, commands.CommandInvokeError):
         original = getattr(error, "original", error)
         print("Command error:", repr(original))
-        return await ctx.send("An internal error occurred.")
+        embed = status_embed(
+            f"❌ {ctx.author.mention}: An internal error occurred.",
+            STATUS_ERROR_COLOR
+        )
+        return await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     print("Unhandled command error:", repr(error))
-    await ctx.send("An error occurred.")
+    embed = status_embed(
+        f"❌ {ctx.author.mention}: An error occurred.",
+        STATUS_ERROR_COLOR
+    )
+    await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
     try:
         print("App command error:", repr(error))
-        await safe_send(interaction, "An error occurred.", ephemeral=True)
+        embed = status_embed("❌ An error occurred.", STATUS_ERROR_COLOR)
+        await safe_send(interaction, embed=embed, ephemeral=True)
+
     except Exception:
         pass
 
